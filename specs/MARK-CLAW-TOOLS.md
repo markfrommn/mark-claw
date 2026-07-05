@@ -1,6 +1,6 @@
 # MARK-CLAW — Tool Selection & Feasibility (Phase A)
 
-**Status:** Confirmed v1 — tool choices approved by Mark 2026-07-05
+**Status:** Confirmed v1.1 — tool choices approved by Mark 2026-07-05; amended same day with §7.4 (local status dashboard) and §12 (agent-framework evaluation — verdict: stay bespoke)
 **Input:** `MARK-CLAW-SPEC.md` (Draft v2 requirements)
 **Output consumers:** Phase B design (`MARK-CLAW-DESIGN.md`) treats this file as ground truth
 **Method:** Web research (5 parallel research passes, 2025–2026 primary sources), user interview (license tiers, admin rights, risk tolerance), and local verification on this machine. Every entry carries a **VERIFIED** / **ASSUMED** flag; citations at the end of each section.
@@ -225,6 +225,13 @@ The channel abstraction (spec §3.5) gets one interface + per-channel adapters i
 
 ### 7.3 Secrets
 - **1Password CLI (`op`, installed — verified).** Config layer stores `op://vault/item/field` references; wrapper scripts resolve at runtime (`op run`). Satisfies spec §10 "credential references, not raw secrets where avoidable". Token files that must exist on disk (OAuth token caches, Telethon session, signal-cli data dir) live in the state layer, chmod 600, and are treated as rebuildable-by-relink secrets.
+- **Pattern upgrade (from §12 framework research):** adopt Vellum's credential-isolation shape — secrets are resolved only inside the thin fetch/action wrappers (the code that talks to provider APIs), never passed into agent prompts or `claude -p` context. The agentic layer sees data files and wrapper commands, not tokens.
+
+### 7.4 Local status dashboard (added 2026-07-05 — user decision)
+- **Requirement:** a centralized view of system health — per-pipeline last-run time + success/failure, triage counts per bucket, alert history, pending review-queue/approval items, source-cursor freshness.
+- **Recommended:** **bespoke and local** — rendered from the state layer (which is already files): either a generated static HTML page or a tiny localhost-only server; loopback-bound, no auth exposure, no external framework. A generated `STATUS.md` in the vault is a cheap complementary mobile view via Obsidian Sync (optional, Phase B decides).
+- **Rejected:** adopting a Claw-family runtime for its dashboard (the attraction that prompted §12) — the dashboard alone doesn't justify importing an agent framework's security surface (§12.1).
+- **Phase B input:** design the state-layer file formats so the dashboard is a pure read-only renderer over them; no pipeline may depend on the dashboard.
 
 Citations: <https://code.claude.com/docs/en/headless>; <https://support.claude.com/en/articles/15036540>; launchd scheduling <https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/ScheduledJobs.html>.
 
@@ -291,6 +298,57 @@ Citations: <https://code.claude.com/docs/en/headless>; <https://support.claude.c
 | launchd-only scheduling | The Mac is routinely asleep at 8 am → add cloud Routine backstop for the briefing (email delivery, vault backfill on wake). |
 | O365 Graph direct | Microsoft ships an official consumer/M365 MCP that matches our constraints → reconsider; meanwhile Softeria MCP is the maintained fallback. |
 | Mattermost Entry-tier cap | Server is on Entry and history visibility matters → upgrade edition or accelerate backfill/archival. |
+| Bespoke runtime (no agent framework — §12) | ZeroClaw or IronClaw reaches a stable 1.x with ~6 months of clean CVE record, **plus** first-class M365/Graph support, **plus** a sanctioned Claude-subscription provider path → re-run the §12 evaluation. Timebox: reassess the landscape ~Q1 2027 regardless. |
+| No two-way Telegram interface | Mark wants phone-side interaction with the assistant after living with one-way alerts → design exists to add it (channel layer is pluggable); PicoClaw's Go gateway (§12.2) is a candidate vendored slice for the bot-protocol plumbing. |
+| Vellum ignored as competitor | Vellum's personal-assistant product ships M365 + Signal support and stays MIT/self-hostable → re-compare against the bespoke build's remaining backlog. |
+
+---
+
+## 12. Agent-framework evaluation (addendum, 2026-07-05)
+
+Evaluated whether an off-the-shelf personal-agent runtime should replace or augment the bespoke launchd + wrappers + `claude -p` architecture: **OpenClaw, ZeroClaw, IronClaw, PicoClaw, NemoClaw, Sai, Hermes Agent, Vellum**. Method: 3 parallel Sonnet web-research passes (2026 primary sources; GitHub stats pulled via API rather than scraped summaries — the Claw space is meme-fueled and full of same-named repos and SEO content) + user interview.
+
+**Decision (Mark, 2026-07-05): stay bespoke.** No framework becomes the runtime or the trust boundary. Borrow specific design patterns (§12.3); revisit per the triggers in §11. Mark's stated bar: frameworks are acceptable only if the hard constraints are structurally enforceable and the attack surface is acceptable — none cleared it; his tolerance for a full re-base was on the table and was still declined on the merits.
+
+### 12.1 Cross-cutting findings (why bespoke wins)
+
+1. **Nobody covers the two load-bearing integrations.** Microsoft 365/Graph is undocumented in *every* candidate; `claude -p`/Max-subscription as a model provider is absent (IronClaw, PicoClaw, NemoClaw, Sai, Vellum), contested in the project's own issue tracker (ZeroClaw #2990 — declined for ToS reasons despite marketing claims), overage-credits-only (Hermes Agent), or policy-unstable (OpenClaw). Both stay custom work under any runtime — so a framework buys channel plumbing we largely already solved, not the hard parts.
+2. **The hard guarantees remain our code regardless.** No framework structurally enforces never-send/never-delete for email or the blocked-source output guarantee; at best generic tool deny-lists wrap community-authored skills that bundle read+send+delete. A bespoke API client that simply never implements the send/delete endpoints is the stronger guarantee.
+3. **Security hard bar.** Every candidate is ≤5 months old and/or carries a 2026 CVE cluster: OpenClaw (~42k exposed unauthenticated gateways found by scanners; RCEs CVE-2026-25253, CVE-2026-30741; poisoned ClawHub skills per Unit42/Cisco), Hermes Agent (9 CVEs in 4 days, Mar 2026), IronClaw (1,305 open issues, pre-1.0), ZeroClaw/PicoClaw (pre-1.0, weekly churn). A system holding tokens for 4 email accounts + 4 chat platforms doesn't adopt that surface for convenience.
+4. **Architecture conflicts.** OpenClaw's single `~/.openclaw/` blob vs our 3-way split; scheduling inside a must-stay-up gateway daemon vs stateless launchd invocations; IronClaw's PostgreSQL+pgvector dependency vs files-over-databases; Vellum's own memory stack vs the Obsidian vault.
+
+### 12.2 Per-tool verdicts
+
+| Tool | What it is (verified mid-2026) | Verdict | Decisive factors |
+|---|---|---|---|
+| **OpenClaw** (MIT, OpenClaw Foundation, ~250–300k★) | Node gateway + channels + ClawHub skills; the ecosystem's center of gravity | **No** | Worst 2026 security record of the set; email = alpha community skills; config-model conflict; contested subscription path. Its cron/heartbeat design is genuinely good — pattern borrowed (§12.3). |
+| **ZeroClaw** (`zeroclaw-labs`, Rust, Apache-2.0, 32k★, v0.8.2) | Single-binary rewrite; OS sandboxes (Landlock/Seatbelt), tool receipts, SQLite+FTS5 memory, cron+heartbeat | **No (best-shaped of the Claws — primary revisit candidate)** | 5 months old; ≥3 unrelated repos share the name (supply-chain hazard); no Signal, no M365; Claude-subscription support contradicted by its own issue #2990. |
+| **IronClaw** (NEAR AI, Rust, Apache-2.0, 12.5k★, v0.29.1) | "Agent OS": WASM capability-sandboxed tools, credential injection at host boundary, Signal channel, Gmail extension, best-documented routines engine | **No (right enforcement *shape* — pattern borrowed)** | Requires PostgreSQL+pgvector; TEE guarantee is hosted-cloud-only; 1,305 open issues; no Slack/M365; agent-writes-its-own-WASM-tools feature enlarges the surface we must reason about. |
+| **PicoClaw** (Sipeed, Go, MIT, 29.6k★, v0.3.1) | Ultra-minimal single binary, 19+ chat channels, JSONL memory | **No** | Thin security posture, no Signal/M365. Noted: its `gateway` is a candidate vendored slice if a two-way Telegram interface is ever wanted (declined for now — §12.4). |
+| **NemoClaw** (NVIDIA, Apache-2.0, 21.6k★) | Not a runtime — a governance **wrapper** (default-deny egress, audit logging) that runs OpenClaw/Hermes inside it | **No** | Solves an enterprise problem we don't have; would add a framework *plus* a wrapper. Its default-deny-egress idea is echoed in our fetch-layer exclusion choke point. |
+| **Sai** (Simular AI, $20–500/mo) | GUI computer-use agent; cloud remote desktop by default | **No** | Wrong shape (drives UIs; our work is API-driven triage); primary mode puts logged-in mail/chat sessions on vendor cloud; API-key billing only. |
+| **Hermes Agent** (Nous Research, MIT, ~210k★, v0.18.0) | Local-first agent framework; native Telegram/Slack/Signal/Email gateways; NL cron; self-improving skills | **No (closest architectural cousin — reference material)** | Pre-1.0 with a 9-CVE cluster (Mar 2026); Claude-subscription mode consumes only purchased Max *overage* credits — defeats the hybrid billing plan. Its skill-accumulation pattern maps to our §9 learning loop; worth reading, not running. |
+| **Vellum** (vellum.ai — pivoted 2026 from LLMOps to consumer "Personal Intelligence"; assistant repo MIT) | Direct competitor product: email triage, briefings, cron/RRULE scheduling, self-host-on-Mac with isolated Credential Execution Service | **No (best privacy architecture seen — pattern borrowed)** | Full platform migration (own memory stack vs our vault/3-way split); no M365, Mattermost, or Signal; Claude-subscription reuse unconfirmed. Mark is open to SaaS in principle, but nothing here beats self-host. |
+
+### 12.3 Patterns adopted into Phase B (design inputs, not dependencies)
+
+1. **Heartbeat batching** (OpenClaw): where several 15-min polls hit the same cadence, run them as one batched sweep sharing a session/context rather than N isolated jobs — fewer invocations, shared triage context. Implement in our launchd + wrapper world.
+2. **Credential isolation** (Vellum CES): secrets resolve only inside the thin provider wrappers; the agentic layer (prompts, `claude -p` context) never sees raw tokens (§7.3).
+3. **Allowlist-over-prompt enforcement** (IronClaw): every hard constraint must be a structural fact of the tool surface (endpoint never implemented / call deny-listed in the wrapper), never a prompt instruction. Already Phase A doctrine — now explicit Phase B acceptance criterion.
+4. **Output-side exclusion check** (OpenClaw output filters): exclusion enforcement stays fetch-side as the primary choke point, **plus** a second output-side scan (blocked-source identifiers must not appear in briefings/notes/logs) as defense-in-depth and as the §13-success-criterion spot-check made continuous.
+5. **Local status dashboard** (the ZeroClaw attraction, built bespoke): §7.4.
+
+### 12.4 Interview decisions (this round, 2026-07-05)
+
+| Topic | Decision |
+|---|---|
+| Motivation probed | General effort reduction + attraction to a centralized dashboard (ZeroClaw's) |
+| Security bar | **Hard bar** — framework only if constraints structurally enforceable + acceptable attack surface |
+| Cloud SaaS processing content | Open to it in principle; nothing found made a compelling case over self-host |
+| Rework tolerance | Full re-base was acceptable if a framework fit — none did |
+| Overall verdict | **Accept: stay bespoke; borrow patterns; revisit triggers set (§11)** |
+| Dashboard | Build lightweight local (state-layer renderer, §7.4) |
+| Two-way Telegram chat interface | **No** — notifications stay one-way; pluggable channel design leaves the door open (§11 trigger) |
 
 ---
 

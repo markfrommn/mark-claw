@@ -82,9 +82,28 @@ Design at minimum:
    definitions, credentials handling, sync cursors, review queues.
 6. Briefing & EOD workflows — content assembly, delivery (email + vault note),
    the EOD auto-draft + voice gap-interview flow.
-7. Notification layer — pluggable channel abstraction with SMS + Telegram first.
+7. Notification layer — pluggable channel abstraction, Telegram bot first (one-way
+   only — a two-way chat interface was explicitly declined; leave the channel
+   abstraction able to grow one later, but do not design it now).
 8. Self-improvement loop — the three approval buckets, review-note format, and how
    approved changes apply.
+9. Local status dashboard (tools spec §7.4) — a read-only renderer over the state
+   layer (pipeline health, last-run times, triage counts per bucket, alert history,
+   pending approvals, cursor freshness). Static HTML or tiny loopback-only server;
+   design the state-file formats so the dashboard needs no pipeline cooperation.
+
+Framework guard: tools spec §12 records an evaluated-and-declined decision on agent
+frameworks (OpenClaw, ZeroClaw, IronClaw, PicoClaw, NemoClaw, Sai, Hermes Agent,
+Vellum). Do not introduce any agent-framework runtime or its plugins — the bespoke
+launchd + wrappers + `claude -p` architecture is the trust boundary. DO fold in the
+four borrowed patterns from §12.3 as design inputs: (a) heartbeat batching — one
+batched sweep per cadence instead of N isolated polls where sources share a schedule;
+(b) credential isolation — secrets resolve only inside provider wrappers, never in
+agent prompts/context; (c) allowlist-over-prompt — every hard constraint must be a
+structural fact of the tool surface, and the design should state where, per
+constraint; (d) output-side exclusion check — a second scan for blocked-source
+identifiers on everything emitted (briefings, notes, logs), in addition to the
+fetch-side choke point.
 
 Keep the "run it, don't over-engineer it" ethos: prefer boring, inspectable designs
 (files over databases, prompts+rules over trained models) unless the requirements
@@ -122,7 +141,12 @@ The plan must:
 - State for each step what lands in the tooling repo vs config vs state (the 3-way
   split is a hard requirement — nothing personal in the repo).
 - Include verification steps for the hard guarantees touched by this phase: exclusion
-  enforcement, no-delete, read-only chat, no autonomous sending/recording.
+  enforcement, no-delete, read-only chat, no autonomous sending/recording — verified
+  structurally (the send/delete call is absent or deny-listed in the wrapper), not by
+  prompt inspection (tools spec §12.3).
+- Honor the no-agent-framework decision (tools spec §12): no OpenClaw/ZeroClaw/etc.
+  runtimes or plugins may appear as dependencies. Place the status dashboard's
+  minimal slice wherever the design's phase mapping puts it.
 - Identify what to build minimally now vs stub for a later phase, honoring the
   "don't over-engineer" ethos.
 - End with a shakeout checklist: how I exercise the phase's output for a few days and
@@ -150,7 +174,13 @@ Rules of engagement:
   (tell me exactly what to click/run).
 - Hard guarantees are non-negotiable: never hard-delete, read-only on chat, no
   autonomous sending or recording, blocked sources never appear in any output. If a
-  step would violate one, stop.
+  step would violate one, stop. Enforce them structurally — never-implemented or
+  deny-listed calls in the wrappers — not via prompts (tools spec §12.3).
+- No agent-framework dependencies (tools spec §12): do not install or wrap
+  OpenClaw/ZeroClaw/IronClaw/PicoClaw/NemoClaw/Hermes/Vellum or their plugins.
+  Pipelines stay small scripts + `claude -p`.
+- Secrets never enter agent prompts or `claude -p` context — they resolve only
+  inside the provider wrappers (tools spec §7.3/§12.3).
 - Keep the 3-way split clean: no personal data or secrets in the repo; config in
   ~/.config/mark-claw/mark/; state in ~/.local/state/mark-claw/mark/.
 - Update the plan file as you go: mark steps done, record deviations and why.
