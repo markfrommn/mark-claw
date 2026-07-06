@@ -111,8 +111,11 @@ force otherwise. Interview me (AskUserQuestion) on genuine design tradeoffs — 
 things the two specs already answer. Suggest simplifications where the requirements
 allow them.
 
-Before writing, present the architecture outline for my confirmation. Then write
-@specs/MARK-CLAW-DESIGN.md, structured so each delivery phase (spec §12) maps to a
+Before writing, present the architecture outline for my confirmation.
+Also ask me at this time and as needed during development for any
+decisions - tradeoffs, risk considerations, judgement calls or uncertainty.
+
+Then write @specs/MARK-CLAW-DESIGN.md, structured so each delivery phase (spec §12) maps to a
 clearly identifiable slice of the design.
 ```
 
@@ -153,7 +156,9 @@ The plan must:
   what feedback we collect before starting the next phase.
 
 Interview me (AskUserQuestion) only where the specs leave an implementation choice
-genuinely open. Before writing the file, present the step outline for confirmation.
+genuinely open. Do also ask me at this time and as needed during development for any
+decisions that are not clear - tradeoffs, risk considerations, judgement calls or
+uncertainty. Before writing the file, present the step outline for confirmation.
 ```
 
 ---
