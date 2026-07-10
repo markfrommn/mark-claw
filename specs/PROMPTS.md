@@ -159,6 +159,11 @@ Interview me (AskUserQuestion) only where the specs leave an implementation choi
 genuinely open. Do also ask me at this time and as needed during development for any
 decisions that are not clear - tradeoffs, risk considerations, judgement calls or
 uncertainty. Before writing the file, present the step outline for confirmation.
+
+When done create linear issues for each phase in the liner project at 
+https://linear.app/psols/project/agentic-and-ai-tooling-ea2f10db893e/overview
+and update the implementation plan with the Linear Issue IDs for each phase.
+
 ```
 
 ---
