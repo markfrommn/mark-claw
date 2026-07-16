@@ -1,0 +1,280 @@
+{
+  "version": 1,
+  "set_version": 1,
+  "source_sha": "1d9ad20bd38daa0f83192ed5f450c478d06c04b2",
+  "stack": "generic",
+  "files": [
+    {
+      "path": ".claude/agents/architect.md",
+      "template": "ai/common/claude/.claude/agents/architect.md.template",
+      "generator": "claude",
+      "rendered": true,
+      "mode": "0640",
+      "sha256": "5b53f3bcdff27336891dcc28fc2ee5a146cb639244b0db03c1d6e6d6a1466fe7"
+    },
+    {
+      "path": ".claude/agents/common-developer.md",
+      "template": "ai/common/claude/.claude/agents/common-developer.md.template",
+      "generator": "claude",
+      "rendered": true,
+      "mode": "0640",
+      "sha256": "63e5a6f085c22c4fe4964c07604e792ef4054925e4f535e84ca200c57cd5da51"
+    },
+    {
+      "path": ".claude/agents/common-quality-reviewer.md",
+      "template": "ai/common/claude/.claude/agents/common-quality-reviewer.md.template",
+      "generator": "claude",
+      "rendered": true,
+      "mode": "0640",
+      "sha256": "d38b94f3943bab728051d3ca2b68d89168afa361a695895236993c596cf7951f"
+    },
+    {
+      "path": ".claude/agents/debugger.md",
+      "template": "ai/common/claude/.claude/agents/debugger.md.template",
+      "generator": "claude",
+      "rendered": true,
+      "mode": "0640",
+      "sha256": "1a55212d18665243057ef15a1d4e9cc131411d766252875782c8e415f811bd1d"
+    },
+    {
+      "path": ".claude/agents/technical-writer.md",
+      "template": "ai/common/claude/.claude/agents/technical-writer.md.template",
+      "generator": "claude",
+      "rendered": true,
+      "mode": "0640",
+      "sha256": "671115dc3710e5f6c877d0c261ee53cf0cdce7dbb2b2982f7c5376ede7e8f5d7"
+    },
+    {
+      "path": ".claude/commands/stack-check.md",
+      "template": "ai/common/claude/.claude/commands/stack-check.md.template",
+      "generator": "claude",
+      "rendered": true,
+      "mode": "0640",
+      "sha256": "eadb83aabfaadd980621814b8f262dd1b32b8812b941c671aa251e8f42cd5b9a"
+    },
+    {
+      "path": ".claude/conventions/CLAUDE.md",
+      "template": "ai/common/claude/.claude/conventions/CLAUDE.md",
+      "generator": "claude",
+      "rendered": false,
+      "mode": "0640",
+      "sha256": "82613e6733d672e962f2c83ce722efef5548085dac4fe654f08300e4726cdb28"
+    },
+    {
+      "path": ".claude/conventions/REGISTRY.yaml",
+      "template": "ai/common/claude/.claude/conventions/REGISTRY.yaml",
+      "generator": "claude",
+      "rendered": false,
+      "mode": "0640",
+      "sha256": "39564331e70ccb362707def88f41fd660414db9630c4276b3fa2fa2cfcf58310"
+    },
+    {
+      "path": ".claude/conventions/code-quality/01-naming-and-types.md",
+      "template": "ai/common/claude/.claude/conventions/code-quality/01-naming-and-types.md",
+      "generator": "claude",
+      "rendered": false,
+      "mode": "0640",
+      "sha256": "1dc8e40de447c8751c9c9862b91bd0019b767144ee922dce59c682438428f1e0"
+    },
+    {
+      "path": ".claude/conventions/code-quality/02-structure-and-composition.md",
+      "template": "ai/common/claude/.claude/conventions/code-quality/02-structure-and-composition.md",
+      "generator": "claude",
+      "rendered": false,
+      "mode": "0640",
+      "sha256": "a768a2a4781df2c19f4866ad17f47b120bc4962288c43b268306663f1695e59d"
+    },
+    {
+      "path": ".claude/conventions/code-quality/03-patterns-and-idioms.md",
+      "template": "ai/common/claude/.claude/conventions/code-quality/03-patterns-and-idioms.md",
+      "generator": "claude",
+      "rendered": false,
+      "mode": "0640",
+      "sha256": "41c6a839d3f913845780ac4c181ee4cf6ca91c08db825fffe1aaaf9079d50955"
+    },
+    {
+      "path": ".claude/conventions/code-quality/04-repetition-and-consistency.md",
+      "template": "ai/common/claude/.claude/conventions/code-quality/04-repetition-and-consistency.md",
+      "generator": "claude",
+      "rendered": false,
+      "mode": "0640",
+      "sha256": "c57138dca029037c992fa04d2b809a92d6447d113dc06b023424d1c14b71b8f8"
+    },
+    {
+      "path": ".claude/conventions/code-quality/05-documentation-and-tests.md",
+      "template": "ai/common/claude/.claude/conventions/code-quality/05-documentation-and-tests.md",
+      "generator": "claude",
+      "rendered": false,
+      "mode": "0640",
+      "sha256": "c8ee22b2008ce212cd15d2d9c79635959ea3f49fba75cb5808030ab61ed0d5b4"
+    },
+    {
+      "path": ".claude/conventions/code-quality/06-module-and-dependencies.md",
+      "template": "ai/common/claude/.claude/conventions/code-quality/06-module-and-dependencies.md",
+      "generator": "claude",
+      "rendered": false,
+      "mode": "0640",
+      "sha256": "b26b3e1ed19073fc0ba05a0a691c81784ff5813f15191fac085bdf1a008068c5"
+    },
+    {
+      "path": ".claude/conventions/code-quality/07-cross-file-consistency.md",
+      "template": "ai/common/claude/.claude/conventions/code-quality/07-cross-file-consistency.md",
+      "generator": "claude",
+      "rendered": false,
+      "mode": "0640",
+      "sha256": "666e8aa2a61e4d3e177ba0ff58c1b0b1290d68bb4b62247d59bf1005902efa1c"
+    },
+    {
+      "path": ".claude/conventions/code-quality/08-codebase-patterns.md",
+      "template": "ai/common/claude/.claude/conventions/code-quality/08-codebase-patterns.md",
+      "generator": "claude",
+      "rendered": false,
+      "mode": "0640",
+      "sha256": "31b60d348c9df82b9c8f06182479e8d66954733203fc13d7a39a8797a7d30462"
+    },
+    {
+      "path": ".claude/conventions/code-quality/09-correctness-security.md",
+      "template": "ai/common/claude/.claude/conventions/code-quality/09-correctness-security.md",
+      "generator": "claude",
+      "rendered": false,
+      "mode": "0640",
+      "sha256": "5fa5baf5179b59ccf525f58490884f4a2088f005188a9f882fc6c671f87823dc"
+    },
+    {
+      "path": ".claude/conventions/code-quality/CLAUDE.md",
+      "template": "ai/common/claude/.claude/conventions/code-quality/CLAUDE.md",
+      "generator": "claude",
+      "rendered": false,
+      "mode": "0640",
+      "sha256": "c24622946f8cc3de255b46c7efc01f22508f93513fbb3ad54ee0b3f6ca714a9a"
+    },
+    {
+      "path": ".claude/conventions/code-quality/README.md",
+      "template": "ai/common/claude/.claude/conventions/code-quality/README.md",
+      "generator": "claude",
+      "rendered": false,
+      "mode": "0640",
+      "sha256": "711ab73b84862c39b7f517174cf45acaf57c267ed12b68c17fb466f51f1e80a5"
+    },
+    {
+      "path": ".claude/conventions/diff-format.md",
+      "template": "ai/common/claude/.claude/conventions/diff-format.md",
+      "generator": "claude",
+      "rendered": false,
+      "mode": "0640",
+      "sha256": "41347eeffbade78b31f1f2c2855d96749bc7221c956677987554430ad89e080a"
+    },
+    {
+      "path": ".claude/conventions/documentation.md",
+      "template": "ai/common/claude/.claude/conventions/documentation.md",
+      "generator": "claude",
+      "rendered": false,
+      "mode": "0640",
+      "sha256": "5ede1b2a742be82032366e6cb6041ba0e54ad4b487232a42ed434e47a2c37ca4"
+    },
+    {
+      "path": ".claude/conventions/intent-markers.md",
+      "template": "ai/common/claude/.claude/conventions/intent-markers.md",
+      "generator": "claude",
+      "rendered": false,
+      "mode": "0640",
+      "sha256": "05281477c2206d3b3403d22168d7b69af3334fcb7e010574ff59a5aa3a44d0fc"
+    },
+    {
+      "path": ".claude/conventions/severity.md",
+      "template": "ai/common/claude/.claude/conventions/severity.md",
+      "generator": "claude",
+      "rendered": false,
+      "mode": "0640",
+      "sha256": "09d5c1e7fb80fbff34c6d6581aa538a191ffc8def7fc0b1a7acd9f716595cac8"
+    },
+    {
+      "path": ".claude/conventions/structural.md",
+      "template": "ai/common/claude/.claude/conventions/structural.md",
+      "generator": "claude",
+      "rendered": false,
+      "mode": "0640",
+      "sha256": "7bc2d10b33e16f706054b1824bf48ea00a2e8ba0f3a685736b5c40684e9f5e54"
+    },
+    {
+      "path": ".claude/conventions/temporal.md",
+      "template": "ai/common/claude/.claude/conventions/temporal.md",
+      "generator": "claude",
+      "rendered": false,
+      "mode": "0640",
+      "sha256": "f4bd422cf20388cc653dc94fe0af1302ef8dbeac49ebe25b5cc87c3663c9190a"
+    },
+    {
+      "path": ".claude/settings.json",
+      "template": "ai/common/claude/.claude/settings.json.template",
+      "generator": "claude",
+      "rendered": true,
+      "mode": "0640",
+      "sha256": "8747ac19abb5fabd9e8fafd9003f34d8dc4e611b3e7d752f95eef4dad290b2af"
+    },
+    {
+      "path": ".claude/skills/common-worktree/SKILL.md",
+      "template": "ai/common/claude/.claude/skills/common-worktree/SKILL.md.template",
+      "generator": "claude",
+      "rendered": true,
+      "mode": "0640",
+      "sha256": "4fd4b65a9652dd204de39f8a06611b60ff46cc476b685a27411eeee1173f8933"
+    },
+    {
+      "path": ".claude/skills/phase/SKILL.md",
+      "template": "ai/common/claude/.claude/skills/phase/SKILL.md.template",
+      "generator": "claude",
+      "rendered": true,
+      "mode": "0640",
+      "sha256": "9a039b907e792e1cf21b3a84f8844520337dc8fd5f3b081789fcc68402b01a63"
+    },
+    {
+      "path": ".cursor/rules/common-workflow.mdc",
+      "template": "ai/common/cursor/.cursor/rules/common-workflow.mdc.template",
+      "generator": "cursor",
+      "rendered": true,
+      "mode": "0640",
+      "sha256": "fa026258bdc68ce7fbd4344f1f846ea87d40857a083849127c7c02ae0f7c0d05"
+    },
+    {
+      "path": ".vscode/extensions.json",
+      "template": "ai/stacks/generic/vscode/.vscode/extensions.json.template",
+      "generator": "vscode",
+      "rendered": true,
+      "mode": "0640",
+      "sha256": "5e0df87259afa75a3186fa6166b25b1139dec96a617ec602183468ce7087e03c"
+    },
+    {
+      "path": ".vscode/settings.json",
+      "template": "ai/stacks/generic/vscode/.vscode/settings.json.template",
+      "generator": "vscode",
+      "rendered": true,
+      "mode": "0640",
+      "sha256": "726eb5e4dc1db1093e5d0b4b070f37095f1ab504aaaafae92b283dd01dccc11f"
+    },
+    {
+      "path": "AGENTS.md",
+      "template": "ai/common/pointers/AGENTS.md.template",
+      "generator": "pointers",
+      "rendered": true,
+      "mode": "0640",
+      "sha256": "bf1eceebe8dc12a58e805cd5a884fbd0470642e738b8542acadc664772c13785"
+    },
+    {
+      "path": "GEMINI.md",
+      "template": "ai/common/pointers/GEMINI.md.template",
+      "generator": "pointers",
+      "rendered": true,
+      "mode": "0640",
+      "sha256": "bf1eceebe8dc12a58e805cd5a884fbd0470642e738b8542acadc664772c13785"
+    },
+    {
+      "path": "specs/WORKFLOW.md",
+      "template": "ai/common/specs/specs/WORKFLOW.md.template",
+      "generator": "specs",
+      "rendered": true,
+      "mode": "0640",
+      "sha256": "b31e78b23ac5983164f3d40ec46fb81b4f465255badf07de01c647263c80b886"
+    }
+  ]
+}

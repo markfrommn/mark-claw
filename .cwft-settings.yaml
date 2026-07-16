@@ -1,0 +1,5 @@
+ai:
+  stack: generic
+  values:
+    repo_display: mark-claw
+    # plan_docs: specs/YOUR-PLAN.md  # TODO: set your implementation-plan doc
