@@ -37,7 +37,7 @@ security add-generic-password -a smoke-test -s mark-claw-mark -w x -A     # crea
 security find-generic-password -a smoke-test -s mark-claw-mark -w        # → x
 security delete-generic-password -a smoke-test -s mark-claw-mark          # clean up
 ```
-- [ ] Done · Linear: [DEV-5](https://linear.app/psols/issue/DEV-5)
+- [x] Done · Linear: [DEV-5](https://linear.app/psols/issue/DEV-5)
 
 ### A2 — Google OAuth client + tokens for 3 Gmail accounts + work Drive (read-only scopes)
 **Lands:** GCP console (own project) · Keychain (`mark-claw-mark`/`google-oauth-client-credential`) · state (`secrets/google/<account-id>/token.json`, 0600) · config (`accounts.yaml` entries with `client_ref` + `token_cache`). Nothing in repo.
