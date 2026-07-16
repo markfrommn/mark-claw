@@ -1,0 +1,29 @@
+---
+description: mark-claw — workflow guardrails and hard rules for AI-assisted edits
+alwaysApply: true
+---
+<!-- BEGIN cwft-ai cursor set-v1 1d9ad20bd38daa0f83192ed5f450c478d06c04b2 — rendered by cwft; edit the template, not this file -->
+
+# mark-claw: rules for AI edits (Cursor)
+
+You are editing the **mark-claw** repo. The execution process is in
+`specs/WORKFLOW.md`; the authoritative hard rules and commands are in `CLAUDE.md`; the approved
+stack and per-stack rules are in your stack profile. Read those before any non-trivial change.
+
+## Workflow guardrails
+
+- **One driver per worktree/branch.** Do NOT make Agent/Composer edits in a worktree while a Claude
+  Code session is actively working it — concurrent writers corrupt each other. Coordinate hand-offs
+  (the session is suspended via a WIP-commit + `HANDOFF.md` before a human takes over).
+- **Branch/PR model.** Work happens on the issue's Linear branch; one Linear issue ⇄ one branch ⇄
+  one PR. Do NOT create side branches, merge to `main`, or open PRs from here unless asked.
+- **Stay in scope** of the current Linear issue — its acceptance criteria are the contract. File a
+  new issue rather than silently expanding scope.
+
+## Hard rules
+
+The authoritative hard rules live in `CLAUDE.md` and `specs/WORKFLOW.md` — never hand-edit generated
+files, stay air-gapped (nothing required at runtime on a CDN/SaaS), use the approved stack only, and
+respect the stack's architectural boundaries. Read those before non-trivial changes, and audit any
+diff with **`/stack-check`** before opening a PR.
+<!-- END cwft-ai cursor set-v1 1d9ad20bd38daa0f83192ed5f450c478d06c04b2 -->

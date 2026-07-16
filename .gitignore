@@ -1,0 +1,9 @@
+#BEGIN cwft-ai
+__pycache__/
+*.pyc
+/.venv/
+/dist/
+#END cwft-ai
+
+# local scratch — reference material, not tracked
+/raw/

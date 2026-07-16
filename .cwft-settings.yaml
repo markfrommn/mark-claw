@@ -1,0 +1,24 @@
+ai:
+  stack: python-uv
+  values:
+    repo_display: mark-claw
+    plan_docs: specs/plans/*-PLAN*.md
+    authority_docs:  specs/MARK-CLAW-SPEC.md -> specs/MARK-CLAW-TOOLS.md -> specs/MARK-CLAW-DESIGN.md
+    verify: "uv build"
+    linear_projects:
+      - "[Agentic and AI Tooling](https://linear.app/psols/project/agentic-and-ai-tooling-ea2f10db893e)"
+    ports: "n/a (CLI tool — no dev-server pane)"
+    # New config-params set explicitly so
+    # agentic-cwft's self-render stays byte-identical to the pre-parameterization
+    # literals. github_org is belt-and-suspenders (also derivable from the git remote).
+    github_org: markfrommn
+    homebrew_org: markfrommn
+    linear_workspace: https://linear.app/psols
+    linear_mcp: linear-server-psols
+    linear_team: DEV
+    npm_scope: "@markfrommn"
+    coauthor_name: "Common Workflow Agent"
+    coauthor_email: noreply@powderhorns.biz
+    review_bot_primary: "@coderabbitai"
+    review_bot_secondary: Macroscope
+    review_skip_label: skip-review

@@ -37,7 +37,7 @@ op vault get mark-claw                      # exists
 op item create --vault mark-claw --title smoke-test --category password password=x
 op read "op://mark-claw/smoke-test/password"   # → x ; then delete the item
 ```
-- [ ] Done · Linear: [ENG-5](https://linear.app/psols/issue/ENG-5)
+- [ ] Done · Linear: [DEV-5](https://linear.app/psols/issue/DEV-5)
 
 ### A2 — Google OAuth client + tokens for 3 Gmail accounts + work Drive (read-only scopes)
 **Lands:** GCP console (own project) · 1P (`google-oauth-client`) · state (`secrets/google/<account-id>/token.json`, 0600) · config (`accounts.yaml` entries with `client_ref` + `token_cache`). Nothing in repo.
@@ -50,7 +50,7 @@ uv run mc auth google powderhorns --self-test
 #   → prints profile emailAddress + total message count via users.getProfile / labels.list
 ```
 Also: consent screen status shows **In production**; token file contains no scope beyond readonly (`grep -c modify token.json` → 0).
-- [ ] Done · Linear: [ENG-6](https://linear.app/psols/issue/ENG-6)
+- [ ] Done · Linear: [DEV-6](https://linear.app/psols/issue/DEV-6)
 
 ### A3 — Entra app registration (jumpweb.net) + Graph token
 **Lands:** Entra portal · 1P (`entra-app`: client_id, tenant_id) · state (`secrets/msal/jumpweb/`) · config (`accounts.yaml` graph entry).
@@ -61,7 +61,7 @@ uv run mc auth graph jumpweb --self-test
 #   → GET /me (UPN = mark@jumpweb.net); GET /me/messages?$top=1 → 200;
 #     GET /me/drive/root → 200. Token cache present, 0600.
 ```
-- [ ] Done · Linear: [ENG-7](https://linear.app/psols/issue/ENG-7)
+- [ ] Done · Linear: [DEV-7](https://linear.app/psols/issue/DEV-7)
 
 ### A4 — Slack internal app + user token
 **Lands:** Slack app config · 1P (`slack-xoxp`).
@@ -73,7 +73,7 @@ curl -s -H "Authorization: Bearer $tok" https://slack.com/api/auth.test | jq .ok
 # response header x-oauth-scopes lists only the 6 read scopes (no write scope present)
 curl -s -H "Authorization: Bearer $tok" "https://slack.com/api/conversations.list?limit=1" | jq .ok  # true
 ```
-- [ ] Done · Linear: [ENG-8](https://linear.app/psols/issue/ENG-8)
+- [ ] Done · Linear: [DEV-8](https://linear.app/psols/issue/DEV-8)
 
 ### A5 — Mattermost PAT + edition check
 **Lands:** MM system console · 1P (`mattermost-pat`) · this plan (edition recorded).
@@ -84,7 +84,7 @@ curl -s -H "Authorization: Bearer $MM_PAT" https://<server>/api/v4/users/me | jq
 curl -s -H "Authorization: Bearer $MM_PAT" https://<server>/api/v4/license   # record edition ↓
 ```
 Edition recorded here: ______ · 10k-cap applies: yes/no
-- [ ] Done · Linear: [ENG-9](https://linear.app/psols/issue/ENG-9)
+- [ ] Done · Linear: [DEV-9](https://linear.app/psols/issue/DEV-9)
 
 ### A6 — Telegram api_id/hash + Telethon session
 **Lands:** 1P (`telegram-api`: api_id, api_hash) · state (`secrets/telegram/session`, 0600).
@@ -93,7 +93,7 @@ Edition recorded here: ______ · 10k-cap applies: yes/no
 ```
 uv run mc auth telegram --self-test    # prints dialog count via get_dialogs, no login prompt on 2nd run
 ```
-- [ ] Done · Linear: [ENG-10](https://linear.app/psols/issue/ENG-10)
+- [ ] Done · Linear: [DEV-10](https://linear.app/psols/issue/DEV-10)
 
 ### A7 — signal-cli install + link (DAY 1 — history accumulates only from link time)
 **Lands:** brew (tool) · state (`secrets/signal/` data dir, 0700).
@@ -104,7 +104,7 @@ signal-cli --config <state>/secrets/signal receive --timeout 5   # exit 0
 # send yourself a test message from the phone; re-run receive → message appears
 stat -f "%Lp" <state>/secrets/signal    # 700
 ```
-- [ ] Done · Linear: [ENG-11](https://linear.app/psols/issue/ENG-11)
+- [ ] Done · Linear: [DEV-11](https://linear.app/psols/issue/DEV-11)
 
 ---
 
@@ -121,7 +121,7 @@ uv run pytest tests/hygiene # green (patterns file present) — finds 0 personal
 git ls-files | xargs grep -l "powderhorns\|jumpweb\|convoydefense\|markfrommn" | grep -v specs/  # empty
 ```
 *(specs/ is exempt — it predates the split and is Mark's own repo; flag if he wants specs scrubbed too.)*
-- [ ] Done · Linear: [ENG-12](https://linear.app/psols/issue/ENG-12)
+- [ ] Done · Linear: [DEV-12](https://linear.app/psols/issue/DEV-12)
 
 ### B2 — Config + state trees, `mark` profile
 **Lands:** config (`~/.config/mark-claw/mark/`: `settings.yaml`, `accounts.yaml`, `sources.yaml`, skeleton `exclusions.yaml`, `local-whitelist.yaml`, `hygiene-patterns.txt`) · state (`~/.local/state/mark-claw/mark/`: `cursors/ spool/ runs/ contacts/ changelog/ quarantine/ secrets/ locks/ logs/` — `secrets/`, `quarantine/`, `spool/ephemeral/` 0700) · repo (`mc doctor` validation logic + example config files under `docs/examples/` with placeholder values only).
@@ -132,7 +132,7 @@ uv run mc doctor    # all green checklist: dirs, perms (700 on secrets/), yaml p
 stat -f "%Lp" ~/.local/state/mark-claw/mark/secrets   # 700
 rm -rf ~/.local/state/mark-claw/mark && uv run mc doctor --init && uv run mc doctor  # rebuilds green
 ```
-- [ ] Done · Linear: [ENG-13](https://linear.app/psols/issue/ENG-13)
+- [ ] Done · Linear: [DEV-13](https://linear.app/psols/issue/DEV-13)
 
 ### B3 — Exclusion gate (`mc_core/exclusion.py`)
 **Lands:** repo (module + unit tests). Config supplies the data (B6).
@@ -143,7 +143,7 @@ uv run pytest tests/unit/test_exclusion.py
 # covers: blocked/ephemeral/allow per source type; prefix inheritance to subfolders;
 # ID-and-name matching; local whitelist inversion (unlisted root → no scan); config reload
 ```
-- [ ] Done · Linear: [ENG-14](https://linear.app/psols/issue/ENG-14)
+- [ ] Done · Linear: [DEV-14](https://linear.app/psols/issue/DEV-14)
 
 ### B4 — Output guard (`mc_core/output_guard.py`) — fail closed
 **Lands:** repo (module + tests). State receives `quarantine/` artifacts + `changelog/` records on trips.
@@ -155,7 +155,7 @@ uv run pytest tests/unit/test_output_guard.py
 # ephemeral identifiers matched on persistence surfaces; no content in logs
 uv run mc guard scan-vault   # command exists; on empty vault → "0 findings"
 ```
-- [ ] Done · Linear: [ENG-15](https://linear.app/psols/issue/ENG-15)
+- [ ] Done · Linear: [DEV-15](https://linear.app/psols/issue/DEV-15)
 
 ### B5 — Canary suite (CI-blocking)
 **Lands:** repo (`tests/canary/` fixture profile + integration test).
@@ -166,7 +166,7 @@ uv run mc test --canary        # green
 grep -r "MCX-CANARY" tests/canary/tmp/output/ | wc -l    # 0
 # mutate the gate to always-ALLOW in a scratch branch → canary goes red (proves the test bites)
 ```
-- [ ] Done · Linear: [ENG-16](https://linear.app/psols/issue/ENG-16)
+- [ ] Done · Linear: [DEV-16](https://linear.app/psols/issue/DEV-16)
 
 ### B6 — Author the real exclusions + local whitelist (gate live before first fetch)
 **Lands:** config only (`exclusions.yaml`, `local-whitelist.yaml`) — Mark authors, assistant assists with ID lookup (channel IDs via A4/A5 tokens, folder paths, contacts).
@@ -177,7 +177,7 @@ uv run mc exclusions lint      # schema valid; prints counts per source + tier
 uv run python -c "…gate.check('slack-work', '<a-known-blocked-id>')"   # → BLOCKED
 uv run mc exclusions lint --show-local   # prints exactly the whitelisted roots, nothing else
 ```
-- [ ] Done · Linear: [ENG-17](https://linear.app/psols/issue/ENG-17)
+- [ ] Done · Linear: [DEV-17](https://linear.app/psols/issue/DEV-17)
 
 ---
 
@@ -193,7 +193,7 @@ git -C ~/Documents/Obsidian/Mark-Claw status 2>/dev/null; echo ok   # vault is N
 grep -r "Obsidian/Mark-Claw" <repo>/mc_core <repo>/bin | wc -l      # 0 — path comes from config
 ```
 Manual: create a note on the Mac → appears on phone via Obsidian Sync within ~1 min; `VAULT-GUIDE.md` readable on phone.
-- [ ] Done · Linear: [ENG-18](https://linear.app/psols/issue/ENG-18)
+- [ ] Done · Linear: [DEV-18](https://linear.app/psols/issue/DEV-18)
 
 ---
 
@@ -207,7 +207,7 @@ uv run pytest tests/unit/test_fetch_base.py
 # covers: gate consulted before content fetch (mock provider asserts no content call for BLOCKED);
 # cursor advances only on success; spool envelope schema; blocked_skipped counted without identifiers
 ```
-- [ ] Done · Linear: [ENG-19](https://linear.app/psols/issue/ENG-19)
+- [ ] Done · Linear: [DEV-19](https://linear.app/psols/issue/DEV-19)
 
 ### D2 — Mail wrappers: Gmail ×3 + Graph (read-only)
 **Lands:** repo (`bin/mc-fetch-gmail`, `bin/mc-fetch-graph` + shared google/msal client builders) · state (token caches already from A2/A3; spool + cursors at runtime).
@@ -221,7 +221,7 @@ uv run pytest tests/structural/test_mail_readonly.py
 uv run mc fetch gmail --account powderhorns --backfill --limit 50 --dry-run   # lists, fetches nothing
 uv run mc fetch gmail --account powderhorns --backfill --limit 50             # 50 items in spool, cursor written
 ```
-- [ ] Done · Linear: [ENG-20](https://linear.app/psols/issue/ENG-20)
+- [ ] Done · Linear: [DEV-20](https://linear.app/psols/issue/DEV-20)
 
 ### D3 — Chat wrappers: Slack, Mattermost, Telegram, Signal (read-only)
 **Lands:** repo (`bin/mc-fetch-slack|mm|tg|signal`) · state (spool/cursors at runtime; TG session + signal data dir already from A6/A7).
@@ -233,7 +233,7 @@ uv run pytest tests/structural/test_chat_readonly.py
 # send_message / signal-cli send call sites anywhere in repo
 uv run mc fetch slack --backfill --conversations 2 --dry-run   # enumerates, honors gate (blocked conv absent)
 ```
-- [ ] Done · Linear: [ENG-21](https://linear.app/psols/issue/ENG-21)
+- [ ] Done · Linear: [DEV-21](https://linear.app/psols/issue/DEV-21)
 
 ### D4 — Drive + OneDrive + local-sweep wrappers
 **Lands:** repo (`bin/mc-fetch-drive`, `bin/mc-fetch-onedrive`, `bin/mc-fetch-local`) · state (cursors: Drive pageToken, Graph deltaLink — captured now so Phase 2+ incremental sync starts from here).
@@ -244,7 +244,7 @@ uv run pytest tests/structural/test_local_whitelist.py   # root injection attemp
 uv run mc fetch drive --account convoydefense --metadata-only --limit 20   # metadata in spool; excluded folder absent
 uv run mc fetch local --list-roots    # prints exactly local-whitelist.yaml contents
 ```
-- [ ] Done · Linear: [ENG-22](https://linear.app/psols/issue/ENG-22)
+- [ ] Done · Linear: [DEV-22](https://linear.app/psols/issue/DEV-22)
 
 ---
 
@@ -261,7 +261,7 @@ ls ~/Documents/Obsidian/Mark-Claw/wiki/people/ | wc -l                       # d
 # resume test: interrupt mid-run (Ctrl-C), rerun → continues from checkpoint (log line "resuming from …")
 # spot-check: 5 dossiers factually sane; mining report lists counts per account
 ```
-- [ ] Done · Linear: [ENG-23](https://linear.app/psols/issue/ENG-23)
+- [ ] Done · Linear: [DEV-23](https://linear.app/psols/issue/DEV-23)
 
 ### E2 — Chat history backfill
 **Lands:** state (spool, per-conversation cursors — positioned so Phase 2 polling starts from "now") · vault (`raw/chat/<platform>/<conv-slug>/YYYY-MM.md` monthly files) · repo (pipeline).
@@ -275,7 +275,7 @@ ls ~/Documents/Obsidian/Mark-Claw/raw/chat/slack/ | head
 grep -ri "<blocked-conv-name>" ~/Documents/Obsidian/Mark-Claw/ ~/.local/state/mark-claw/mark/spool/ | wc -l   # 0
 uv run mc guard scan-vault    # 0 findings
 ```
-- [ ] Done · Linear: [ENG-24](https://linear.app/psols/issue/ENG-24)
+- [ ] Done · Linear: [DEV-24](https://linear.app/psols/issue/DEV-24)
 
 ### E3 — Drive/OneDrive key docs (propose → approve → ingest)
 **Lands:** vault (`raw/ingest/docs-proposal.md`, then `raw/docs/<source-id>/…` for approved items + wiki links) · state (cursors) · repo (pipeline).
@@ -286,7 +286,7 @@ uv run mc ingest docs --propose      # proposal report lands in vault; excluded 
 # Mark edits checkboxes …
 uv run mc ingest docs --apply        # only ticked items fetched; report appended with results
 ```
-- [ ] Done · Linear: [ENG-25](https://linear.app/psols/issue/ENG-25)
+- [ ] Done · Linear: [DEV-25](https://linear.app/psols/issue/DEV-25)
 
 ### E4 — Local machine sweep
 **Lands:** vault (`raw/ingest/local-sweep-report.md`, ingested reference docs under `raw/docs/local/…`) · repo (pipeline reusing D4).
@@ -297,13 +297,13 @@ uv run mc ingest local --propose && uv run mc ingest local --apply
 # report lists only whitelisted roots; repo inventory note in vault; TCC note: if ~/Documents
 # is whitelisted and mdfind returns suspiciously little, check mdutil -s / FDA (tools §5.5)
 ```
-- [ ] Done · Linear: [ENG-26](https://linear.app/psols/issue/ENG-26)
+- [ ] Done · Linear: [DEV-26](https://linear.app/psols/issue/DEV-26)
 
 ### E5 — Life-story / goals session
 **Lands:** vault (`raw/ingest/life-story.md` full transcript · `wiki/_meta/core-context.md` distilled: who Mark is, goals, priorities, key people/projects — referenced by future pipeline prompts) · repo (`prompts/life-story.md`).
 **Do:** interactive `claude` session primed with the interview prompt + the E1 contact/project seeds (so it asks informed gap questions); Mark answers typed or via VoiceInk (install is optional this phase — tools §4.5); session has vault-write only in `--allowedTools`.
 **Accept:** transcript + distilled note exist with proper frontmatter; Mark reviews `core-context.md` and signs off on accuracy; output guard passed (it runs on every vault write).
-- [ ] Done · Linear: [ENG-27](https://linear.app/psols/issue/ENG-27)
+- [ ] Done · Linear: [DEV-27](https://linear.app/psols/issue/DEV-27)
 
 ---
 
@@ -315,7 +315,7 @@ uv run mc ingest local --propose && uv run mc ingest local --apply
 2. **Full-vault guard scan:** `uv run mc guard scan-vault` over the entire vault + all Phase-1 logs → 0 findings (this becomes the Phase-2 weekly continuous check).
 3. Full test suite: `uv run pytest && uv run mc test --canary` green.
 4. Append the **status note** at the bottom of this file: what shipped, deviations, stub list, known issues, Mattermost edition, Signal history gap extent — the Phase 2 planning session reads it.
-- [ ] Done · Linear: [ENG-28](https://linear.app/psols/issue/ENG-28)
+- [ ] Done · Linear: [DEV-28](https://linear.app/psols/issue/DEV-28)
 
 ---
 
@@ -361,7 +361,7 @@ Feedback to collect for Phase 2 planning:
 ## Linear tracking
 
 Project: [agentic-and-ai-tooling](https://linear.app/psols/project/agentic-and-ai-tooling-ea2f10db893e/overview)
-Phase parents: Phase 1 [ENG-1](https://linear.app/psols/issue/ENG-1) · Phase 2 [ENG-2](https://linear.app/psols/issue/ENG-2) · Phase 3 [ENG-3](https://linear.app/psols/issue/ENG-3) · Phase 4 [ENG-4](https://linear.app/psols/issue/ENG-4)
+Phase parents: Phase 1 [DEV-1](https://linear.app/psols/issue/DEV-1) · Phase 2 [DEV-2](https://linear.app/psols/issue/DEV-2) · Phase 3 [DEV-3](https://linear.app/psols/issue/DEV-3) · Phase 4 [DEV-4](https://linear.app/psols/issue/DEV-4)
 Step sub-issues recorded inline per step above.
 
 ---

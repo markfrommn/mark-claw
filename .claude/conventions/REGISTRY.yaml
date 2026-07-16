@@ -1,0 +1,82 @@
+# Role-Convention Registry
+# CI validates actual get_convention() calls match these declarations
+#
+# Structure per role:
+#   receives: list of conventions this role loads
+#   phase_specific: per-phase convention overrides
+#   mode_specific: per-mode convention overrides (design vs code)
+#   rationale: explanation for roles with empty receives
+
+developer:
+  receives:
+    - diff-format.md
+
+architect:
+  receives:
+    - CLAUDE.md
+    - structural.md
+    - code-quality/CLAUDE.md
+  rationale: "Design/planning review — the conventions index (CLAUDE.md) for Design Review applicability, code-quality index, and structural conventions for planner decision audits"
+
+debugger:
+  receives: []
+  rationale: "Investigation only; reads the affected module's CLAUDE.md directly during pre-investigation, produces a diagnostic report rather than convention-governed code/docs"
+
+technical_writer:
+  receives:
+    - temporal.md
+    - documentation.md
+
+quality_reviewer:
+  receives:
+    - temporal.md
+    - structural.md
+    - diff-format.md
+    - code-quality/*
+  phase_specific:
+    plan_completeness:
+      - structural.md
+    plan_code:
+      - diff-format.md
+      - code-quality/01-naming-and-types.md
+      - code-quality/02-structure-and-composition.md
+      - code-quality/03-patterns-and-idioms.md
+      - code-quality/04-repetition-and-consistency.md
+      - code-quality/05-documentation-and-tests.md
+      - code-quality/09-correctness-security.md
+    plan_docs:
+      - temporal.md
+    post_impl_code:
+      - structural.md
+      - code-quality/01-naming-and-types.md
+      - code-quality/02-structure-and-composition.md
+      - code-quality/03-patterns-and-idioms.md
+      - code-quality/04-repetition-and-consistency.md
+      - code-quality/05-documentation-and-tests.md
+      - code-quality/06-module-and-dependencies.md
+      - code-quality/07-cross-file-consistency.md
+      - code-quality/08-codebase-patterns.md
+      - code-quality/09-correctness-security.md
+    post_impl_doc:
+      - temporal.md
+
+refactor:
+  receives:
+    - code-quality/*
+  mode_specific:
+    design:
+      - code-quality/01-naming-and-types.md
+      - code-quality/02-structure-and-composition.md
+      - code-quality/06-module-and-dependencies.md
+      - code-quality/07-cross-file-consistency.md
+      - code-quality/09-correctness-security.md
+    code:
+      - code-quality/*
+
+explore:
+  receives: []
+  rationale: "Codebase reading only, no convention-aware output"
+
+general_purpose:
+  receives: []
+  rationale: "Planning and general tasks; produces artifacts that other roles process"
