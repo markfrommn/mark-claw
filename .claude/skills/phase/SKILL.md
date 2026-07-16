@@ -1,6 +1,6 @@
 ---
 name: phase
-description: Drive one unit of work (one PR) of the mark-claw implementation plan end-to-end — branch/worktree, delegate to the common-developer agent, run gates, review, open the PR, work the bot sequence, and stop at the human merge gate. Use when asked to "run phase N" / "run <milestone>" / "run ISSUE-NNN".
+description: Drive one unit of work (one PR) of the mark-claw implementation plan end-to-end — branch/worktree, delegate to the common-developer agent, run gates, review, open the PR, work the bot sequence, and stop at the human merge gate. Use when asked to "run phase N" / "run <milestone>" / "run DEV-NNN".
 argument-hint: <phase / milestone / issue — e.g. P3, M3, ISSUE-279>
 ---
 <!-- BEGIN cwft-ai claude set-v1 1d9ad20bd38daa0f83192ed5f450c478d06c04b2 — rendered by cwft; edit the template, not this file -->
@@ -11,14 +11,14 @@ You are the **orchestrator** for one unit of work (one PR) of the mark-claw
 build. You sequence the work and verify it; you do **not** write implementation code — the
 `common-developer` agent does. Read `CLAUDE.md` first — it is authoritative for this repo's agent
 instructions and hard rules (process/execution constraints). For scope/behavior, the authority
-chain is: (none) → the relevant plan doc(s) `(none)`
+chain is: specs/MARK-CLAW-SPEC.md -> specs/WORKFLOW.md → the relevant plan doc(s) `specs/plans/*-PLAN*.md`
 (this unit's section; `plan_docs` is one or more paths, space-separated) → the rendered
 `specs/WORKFLOW.md` (process). On conflict within that chain, the
 higher doc wins; escalate with `AskUserQuestion` before deviating.
 
 **Argument = one PR's worth of work.** The build runs **one Linear issue ⇄ one branch ⇄ one PR**,
 and a plan section usually maps to a single issue. Accept a phase/milestone label or a Linear issue
-id; resolve it against the plan doc(s) `(none)` (`plan_docs` is one or more
+id; resolve it against the plan doc(s) `specs/plans/*-PLAN*.md` (`plan_docs` is one or more
 paths, space-separated — search **all** of them) to the exact **issue(s) this one PR closes** and the
 detailed per-PR plan doc if one exists. If a phase/unit identifier (e.g. "Unit 1", "P3") matches a
 section in **more than one** listed doc, that is an ambiguous case → use `AskUserQuestion` naming
@@ -33,13 +33,13 @@ each doc and its matching section, rather than silently picking the first. A typ
   below all assume the repo root.
 - You are in the correct checkout (main or the issue's worktree) with a clean working tree.
 - The prerequisite phases/issues are **merged** — respect the dependency graph in the plan doc(s)
-  `(none)`. Check `git log origin/main` / `gh pr list --state merged` and the
+  `specs/plans/*-PLAN*.md`. Check `git log origin/main` / `gh pr list --state merged` and the
   Linear blocking relations. Independent units in the same wave may run in **parallel worktrees** —
   this session drives exactly one.
-- Read the unit's section in the plan doc(s) `(none)` **and** the design section(s) it cites:
+- Read the unit's section in the plan doc(s) `specs/plans/*-PLAN*.md` **and** the design section(s) it cites:
   note the Linear issue, scope, files, dependencies, and **Acceptance criteria** (the AC are the
   Definition of Done).
-- Fetch the Linear issue (linear-server MCP): confirm state and `gitBranchName`. Set it
+- Fetch the Linear issue (linear-server-psols MCP): confirm state and `gitBranchName`. Set it
   **In Progress**. Do **not** manually close issues — the GitHub↔Linear integration moves them to
   *Done* on merge.
 - **Confirm the canonical session name.** Run `cwft session name` to surface it. A session launched
@@ -50,22 +50,24 @@ each doc and its matching section, rather than silently picking the first. A typ
 
 ## 1. Branch / worktree
 
-Bring up the working branch in a git worktree so the repo stays usable on `main`. Use `common-worktree` (without `--branch-only`):
+Bring up the working branch in a git worktree so this repo stays usable on `main`. Use `common-worktree` (without `--branch-only`):
 
-- Worktree convention: a sibling directory `<repo>-wt/<issue-id>` alongside the repo. The worktree is a new branch off `origin/main` and shares the main repo's `.git`.
-- This is the generic profile — there is no stack-specific setup command to run in the new worktree yet. Run whatever this repo's own README documents (if anything) before delegating the build.
+- Worktree convention: a sibling directory `<repo>-wt/eng-NNN` alongside the repo. The worktree is a new branch off `origin/main`.
+- The worktree shares the main repo's `.git`; the `.venv` is independent per worktree (`uv sync` in the worktree).
+- **Postgres preflight:** this repo assumes a running PostgreSQL (Prefect metadata DB + app DB + message queue). Before delegating to common-developer, confirm the local Postgres is up and the grants are in place via the ops CLI `init-db` / `migrate`, or note that the unit under test doesn't need a live DB.
 - Keep the worktree on its branch; do not merge to `main` locally — the PR is the merge path.
 
 
 ## 2. Build the context packet and delegate
 
-Spawn the `common-developer` agent with a context packet containing: the unit's scope, its acceptance criteria, and the authority chain it must read first (`(none)` → the relevant plan `(none)`).
+Spawn the `common-developer` agent (Sonnet for typical job/platform work, Opus for spec/architectural phases) with a context packet containing: the phase scope, the acceptance criteria, and the authority chain it must read first (`specs/MARK-CLAW-SPEC.md -> specs/WORKFLOW.md` → the relevant plan).
 
 Restate the standing constraints for this stack:
-- No established stack yet — this repo runs the generic profile: no approved-dependency list, formatter, or gate command is baked in. Note any dependency or tooling choice made along the way so a human can weigh in.
-- TDD-first; gates green before returning (`true`, plus whatever this repo's own checks are).
+- Prefect-native plain-Python jobs; air-gapped first (bundled wheels, pinned `uv.lock`, no runtime PyPI/CDN).
+- No schema-owning ORM — app DB via SQLAlchemy Core/psycopg 3 SQL; the hand-authored-migration schema's migrations are hand-authored SQL (C2); vendored `specs/contracts/` as the only app-schema source (C1).
+- Pydantic v2 / mypy / Ruff / pytest; TDD-first; gates green before returning (`uv lock --check && uv run ruff check . && uv run mypy && uv run pytest && uv build --all-packages` from the repo root).
 
-"Done" = a report listing what was implemented, the AC checklist (met/unmet), exact gate output, any deviation from the plan (with rationale), and any open questions. No code dumps.
+"Done" = a report listing what was implemented (by package/flow), the AC checklist (met/unmet), exact gate output, any deviation from the design (with rationale), and any open questions.
 
 
 If the agent hits a wall (same failure ~3×, spec ambiguity, scope drift), it stops and reports; you
@@ -77,7 +79,7 @@ suspend-and-`HANDOFF.md` protocol per `specs/WORKFLOW.md`.
 Never trust the report alone:
 
 - Re-run the gates yourself (same working directory as stated in step 2's delegate context):
-  `true`.
+  `uv lock --check && uv run ruff check . && uv run mypy && uv run pytest && uv build --all-packages`.
 - If the unit touched a generated surface, run the stack's codegen loop and confirm **no drift** — a
   dirty tree after regeneration is drift and means not done.
 - Diff review sanity: `git diff origin/main --stat` — scope matches the unit; no hand-edited
@@ -87,7 +89,7 @@ Never trust the report alone:
   explicit range, not the no-argument default, since the working tree is typically clean by this
   point and would otherwise audit an empty diff.
 - If the unit has runtime surface, **verify against the running app/server**: exercise the new flow
-  directly (`(none)`) or drive it with the `verify` skill. For air-gap-sensitive
+  directly (`uv build`) or drive it with the `verify` skill. For air-gap-sensitive
   units, confirm **zero external network requests**.
 - Check the AC checklist item by item; anything unmet goes back to the common-developer agent.
 
@@ -104,7 +106,7 @@ description. Re-run gates after fixes.
 git push -u origin <gitBranchName>
 gh pr create --base main --assignee @me \
   --title "<type>(<scope>): <unit title>" \
-  --body $'<summary of what/why, AC checklist>\n\nCloses ISSUE-NNN'
+  --body $'<summary of what/why, AC checklist>\n\nCloses DEV-NNN\n\n@coderabbitai ignore'
 # append  --project "<name>"  when the github_projects bullet below resolves to one
 ```
 
@@ -114,18 +116,33 @@ gh pr create --base main --assignee @me \
   Projects concept; no `gh projects list` query — config-driven only).
   No `github_projects` configured (key unset or empty) → **omit `--project` entirely** (today's behavior, unchanged).
 
-- **Close every issue this PR covers** — one `Closes ISSUE-NNN` line each. The Linear branch name also
+- **Close every issue this PR covers** — one `Closes DEV-NNN` line each. The Linear branch name also
   auto-links so merge moves the issue to *Done*.
+- **Re-fetch the body (`gh pr view --json body`) and confirm the `@coderabbitai ignore` line is
+  present** — if missing, `gh pr edit` to add it before CodeRabbit starts (otherwise both bots run
+  concurrently and duplicate findings).
+
+## 6. Bot sequence (`specs/WORKFLOW.md` §7)
+
+1. Wait for **Macroscope**; poll ~once per minute (`gh pr view --comments`, `gh pr checks`) — never
+   busy-poll.
+2. Work every Macroscope finding: fix (delegate to a triage agent — haiku/sonnet by judgment
+   required) or justify. Reply `fixed by git commit <hash>` (or the justification) and resolve the
+   comment.
+3. When Macroscope is clean, add the **`skip-review` label**.
+4. Comment **`@coderabbitai fullreview`**; use its "Estimated code review effort" as the wait
+   estimate; work its findings the same way.
+5. Keep CI green throughout; small commits per finding batch.
 
 ## 7. Hand off to the human
 
-When CI is green: summarize the PR state, confirm the Linear issue still
-links the PR, and **stop — the human reviews and merges. Never
+When both bots are satisfied and CI is green: summarize the PR state, confirm the Linear issue still
+links the PR, remove the **`skip-review` label**, and **stop — the human reviews and merges. Never
 merge, never enable auto-merge.**
 
 After the human merges: confirm the Linear issue moved to *Done* (set manually only if the
 automation missed), note anything learned that should amend the plan doc(s)
-`(none)` / the design docs (propose the edit — keep plan and Linear in sync),
+`specs/plans/*-PLAN*.md` / the design docs (propose the edit — keep plan and Linear in sync),
 remove the worktree if you made one
 (`cwft session` cleanup, or `git worktree remove`), and report which unit(s) this unblocks. The next
 unit runs in a **fresh session**.

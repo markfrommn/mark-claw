@@ -2,8 +2,7 @@
   "permissions": {
     "allow": [
       
-      "Bash(ls:*)", "mcp__linear-server__get_issue", "mcp__linear-server__list_issues"
-
+      "Bash(uv sync)", "Bash(uv sync *)", "Bash(uv lock --check)", "Bash(uv build)", "Bash(uv build *)", "Bash(uv run ruff *)", "Bash(uv run mypy)", "Bash(uv run mypy *)", "Bash(uv run pytest)", "Bash(uv run pytest *)", "Bash(docker compose config)", "Bash(docker compose config *)", "mcp__linear-server-psols__get_issue", "mcp__linear-server-psols__list_issues"
     ]
   },
   "enabledPlugins": {}

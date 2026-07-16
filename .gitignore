@@ -1,2 +1,6 @@
 #BEGIN cwft-ai
+__pycache__/
+*.pyc
+/.venv/
+/dist/
 #END cwft-ai

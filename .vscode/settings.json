@@ -1,4 +1,5 @@
 {
+  "editor.formatOnSave": true,
   "files.insertFinalNewline": true,
   "files.trimTrailingWhitespace": true,
   "files.exclude": {
@@ -6,8 +7,26 @@
     "**/.DS_Store": true
   },
   "search.exclude": {
-    "**/node_modules": true,
+    "**/.venv": true,
     "**/dist": true,
-    "**/.venv": true
-  }
+    "**/node_modules": true
+  },
+  "files.watcherExclude": {
+    "**/.venv/**": true,
+    "**/dist/**": true,
+    "**/volumes/**": true,
+    "**/*.egg-info/**": true,
+    "**/.mypy_cache/**": true,
+    "**/.ruff_cache/**": true,
+    "**/.pytest_cache/**": true
+  },
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    }
+  },
+  "python.defaultInterpreterPath": "./.venv/bin/python",
+  "python.analysis.typeCheckingMode": "basic"
 }

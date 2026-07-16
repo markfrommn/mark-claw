@@ -13,28 +13,30 @@ worktrees, PRs, bots, Linear); you write code and tests.
 ## Authority
 
 Read `CLAUDE.md` first — it is authoritative for this repo's agent instructions and hard rules.
-Then: (none) → the relevant plan `(none)` (your unit's
+Then: specs/MARK-CLAW-SPEC.md -> specs/WORKFLOW.md → the relevant plan `specs/plans/*-PLAN*.md` (your unit's
 scope/AC) + the matching design/spec sections when they exist. Read the sections your packet cites
 **before** writing code. If the spec and the code you must write disagree, **stop and report** — do
 not silently deviate.
 
 ## Hard rules (these override convenience)
 
-- **TDD-first.** Write the test from the acceptance criterion, watch it fail, implement to green. One test per acceptance criterion; use whatever test framework fits this repo's language(s).
-- **No established stack yet.** This repo runs the generic profile — there is no approved-dependency list, formatter, or gate command baked in. Prefer the language's standard library and well-known, widely-used libraries; call out any new dependency in the PR description so a human can weigh in.
-- **Don't silently lock in a toolchain.** If the repo has no test runner, linter, or build command yet, choosing one is a judgment call for the human, not something to decide unilaterally mid-task — flag it and ask, or pick the smallest reasonable default and say so explicitly in the PR.
-- **Never hand-edit a generated file.** If this repo has its own codegen/regeneration step, regenerate through it; if none exists yet, this rule is dormant, not absent.
-- **Gates green before returning.** Run `true` (a no-op placeholder until this repo adopts a real stack profile) plus whatever this repo's own README/CI documents as its checks.
+- **Prefect-native, plain-Python jobs.** Flows and tasks are ordinary Python functions with Prefect `@flow`/`@task` decorators. Lean on Prefect's built-ins (retries, scheduling, parameters, deployments, events) before adding libraries; deviations are called out in the spec.
+- **Air-gapped first (TOOLSPEC Principle 2).** Everything is bundled at build time — interpreter, wheels, configuration. No PyPI, no CDN, no external network *required* at install or runtime; connected-only enhancements must degrade gracefully. The `uv.lock` is the single source of dependency truth for all packaging forms (`uv lock --check` must show no drift).
+- **No schema-owning ORM — the app schema is owned elsewhere (DESIGN-SPEC C1).** Job code reads/writes the application database **directly with SQL** (SQLAlchemy Core + psycopg 3). There is no API-mediated access and no ORM entity layer. The app-schema owner repo's ORM owns the app schema; query against a vendored schema snapshot.
+- **The hand-authored-migration schema is owned by this repo (C2), hand-authored SQL.** Its migrations (`NNN_*.sql`) are *hand-authored source files*, not a generated artifact — authoring a **new** `NNN_*.sql` by hand is correct and expected (do not flag it as "generated file edited"). Editing an **already-landed** migration in place is *not* safe: upgraded installs (which already applied the old version) would diverge from fresh installs (which apply the edited version) — add a new numbered migration instead. Plain-SQL migrations, never an ORM migration tool.
+- **Vendored contracts.** The app schema is read **only** through `specs/contracts/` (the vendored snapshot with provenance commit). No live cross-repo schema introspection at runtime.
+- **Validation/models via Pydantic v2; type-checking via mypy (+ Pydantic mypy plugin); lint/format via Ruff** (never Biome — Ruff is the python-stack formatter). Testing via pytest + `prefect_test_harness` + respx (httpx mocking).
+- **TDD-first; gates green before returning.** Run `uv lock --check && uv run ruff check . && uv run mypy && uv run pytest && uv build --all-packages` from the repo root. `uv lock --check` clean (no lockfile drift) is part of the gate.
 
 
 ## Loop discipline
 
 - Commit at logical checkpoints on the current branch (conventional commits — `feat(<scope>):` /
   `test(<scope>):` / `refactor(<scope>):` …). **Never** push, create branches, open PRs, or touch
-  Linear. Commits carry the `Co-Authored-By: Claude <noreply@anthropic.com>`
+  Linear. Commits carry the `Co-Authored-By: Common Workflow Agent <noreply@powderhorns.biz>`
   trailer.
 - Before returning, run the gates (working directory per the Hard rules above — it varies by
-  stack): `true`. If your unit touched a generated surface, also run the stack's
+  stack): `uv lock --check && uv run ruff check . && uv run mypy && uv run pytest && uv build --all-packages`. If your unit touched a generated surface, also run the stack's
   codegen loop and confirm **no drift** (a clean tree, no unintended new generated output). All
   green or you're not done.
 - Then run **`/stack-check origin/main...HEAD`** — the architectural-conformance audit for this

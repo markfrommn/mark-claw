@@ -122,7 +122,7 @@ hand to step 3.
 
 ### Branch-name resolution
 
-Fetch each issue's Linear branch name (linear-server MCP `get_issue`, field `gitBranchName`):
+Fetch each issue's Linear branch name (linear-server-psols MCP `get_issue`, field `gitBranchName`):
 
 - **Single issue:** `BRANCH` = that issue's `gitBranchName` (copy it from Linear's "Copy git branch
   name").

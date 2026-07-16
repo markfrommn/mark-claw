@@ -2,13 +2,13 @@
 # Workflow — mark-claw
 
 This is the **operational playbook** for building this repo with Claude Code: the per-PR loop, the
-terminal/worktree setup, how the human and Claude hand work back and forth,
+terminal/worktree setup, how the human and Claude (and the review bots) hand work back and forth,
 and how to recover when an agent goes off the rails. It is rendered for this repo specifically —
 everything below is already specialized to this stack, so there is nothing to cross-reference and no
 other workflow file to read.
 
-**Authority chain (this repo):** (none) → `CLAUDE.md` (hard rules +
-commands) → the implementation plan doc(s) `(none)` (one or more paths,
+**Authority chain (this repo):** specs/MARK-CLAW-SPEC.md -> specs/WORKFLOW.md → `CLAUDE.md` (hard rules +
+commands) → the implementation plan doc(s) `specs/plans/*-PLAN*.md` (one or more paths,
 space-separated; what/when) → this playbook (how to execute). On any conflict, the higher document
 wins and the lower one is updated.
 
@@ -18,7 +18,8 @@ wins and the lower one is updated.
 
 > **One Linear issue = one branch = one PR.** Pick the next unblocked issue → **run
 > `/phase <issue-id>`**, which brings up the branch/worktree, delegates the build to the
-> `common-developer` agent (TDD), runs the gates, reviews, opens the PR → the human merges → the issue auto-closes →
+> `common-developer` agent (TDD), runs the gates, reviews, opens the PR, and works the two review
+> bots **in sequence** → you triage the judgment calls → the human merges → the issue auto-closes →
 > the worktree is cleaned up. Repeat.
 
 `/phase` is the standard path and automates §2–§7 below. The rest of this document is **what `/phase`
@@ -34,23 +35,25 @@ escape hatch (§8) when something derails.
 | **Human driver (you)** | Picks the next issue, launches/steers Claude (usually via `/phase`), owns design judgment calls, resolves "off the rails" situations, gives final PR approval, **merges**. |
 | **`/phase` orchestrator** (interactive Claude session) | The default executor: one session per PR. Resolves the issue, brings up the branch/worktree, delegates the build, runs gates, opens the PR, works the bot sequence — stopping at the human merge gate. |
 | **Subagents** (`common-developer`, `architect`, `common-quality-reviewer`, `technical-writer`, `debugger`, `common-worktree`) | Delegated specialists the orchestrator calls: `common-developer` writes the code+tests TDD-first, `architect` for design calls, `common-quality-reviewer` for the pre-PR review, `technical-writer` for docs, `debugger` for hard bugs, `common-worktree` for branch/worktree bring-up. |
+| **CodeRabbit + Macroscope** | Automated PR reviewers, run **sequentially** (see §7) to avoid duplicate findings. |
 
-The human is always the merge gate. Claude never merges.
+The human is always the merge gate. Claude never merges (see §7).
 
 ---
 
 ## 2. Source of truth: the Linear project
 
-Issues live in this repo's Linear project(s), all under team **ISSUE**:
+Issues live in this repo's Linear project(s), all under team **DEV**:
 
+- [Agentic and AI Tooling](https://linear.app/psols/project/agentic-and-ai-tooling-ea2f10db893e)
 
-All issues live in the **ISSUE** team: <https://linear.app/markfrommn/team/ISSUE/all>. Each issue maps to a
+All issues live in the **DEV** team: <https://linear.app/psols/team/DEV/all>. Each issue maps to a
 plan sub-step and carries its acceptance criteria in its description.
 
 Rules:
 
 - **Each issue's acceptance criteria are the per-PR Definition of Done** — read them first
-  (`get_issue ISSUE-NNN`); they are the spec for the PR. `/phase` fetches the issue and sets it
+  (`get_issue DEV-NNN`); they are the spec for the PR. `/phase` fetches the issue and sets it
   **In Progress** for you.
 - **Use Linear's git branch name.** Every issue has a generated `gitBranchName` — copy it from
   Linear's **"Copy git branch name"** action. Use it verbatim so Linear's GitHub integration
@@ -68,8 +71,8 @@ The Linear MCP is available to Claude — it can read issue descriptions, set st
 ## 3. Environment (macOS, terminal-first)
 
 Assumed tools (install via Homebrew if missing): `git` (worktrees), `gh` (authed),
-`tmux`, plus this stack's toolchain — **none** via
-**none** (runtime **none**). Nice-to-haves:
+`tmux`, plus this stack's toolchain — **python** via
+**uv** (runtime **python**). Nice-to-haves:
 `fzf`, `caffeinate` (keep the Mac awake during long agent runs), `terminal-notifier` or `osascript`
 (desktop ping when an agent finishes).
 
@@ -81,7 +84,7 @@ the working tree, laid out under this repo's worktree parent dir — by conventi
 location with the `workflow.worktree_parent` config key in `.cwft-settings.yaml`. Bring-up is handled
 for you by `/phase` (via the **`common-worktree`** agent); the underlying turnkey command is `cwft`,
 which creates the worktree, branches from `origin/main`, runs the stack's setup
-(none install), and opens its own tmux session in one shot:
+(uv install), and opens its own tmux session in one shot:
 
 ```bash
 # /phase does this for you; by hand it's:
@@ -113,7 +116,7 @@ plain shell. Drive Claude in pane 0; glance at the other panes for live feedback
 parallel sessions, each its own worktree + Claude driver — **don't run two Claude sessions in one
 worktree.**
 
-- **Dev-server port:** n/a
+- **Dev-server port:** n/a (CLI tool — no dev-server pane)
 - See the profile notes below for this stack's exact pane commands and any parallel-worktree port
   caveat.
 
@@ -129,7 +132,7 @@ Cursor window** (`cursor "<WT>/eng-NNN"`):
   a window rooted at the main checkout will mislead both.
 - **One Cursor window per worktree**, mirroring one tmux session / one Claude session per worktree.
 - **Shared config is committed and auto-inherited by every worktree** (tracked files):
-  - `.vscode/settings.json` — this stack's formatter (**none**) runs on save;
+  - `.vscode/settings.json` — this stack's formatter (**ruff**) runs on save;
     Prettier only for Markdown; heavy/generated dirs excluded from search/watch. (Cursor reads
     `.vscode/`.)
   - `.vscode/extensions.json` — the baseline recommended extensions (a stack-agnostic set; per-stack
@@ -144,7 +147,7 @@ Cursor window** (`cursor "<WT>/eng-NNN"`):
    Claude Code session is editing it — two writers on the same files corrupt each other's edits.
 2. **Disk-vs-buffer.** If Claude changed files while you had them open, Cursor shows *"file changed
    on disk."* **Reload/revert to disk** — don't save your stale buffer over Claude's work.
-3. **Let the stack's formatter own formatting.** The committed settings make **none**
+3. **Let the stack's formatter own formatting.** The committed settings make **ruff**
    the formatter for code; Prettier is Markdown-only. Don't switch the default or add a second
    format-on-save formatter — it creates PR churn the bots flag.
 4. **Never hand-edit generated files** (this stack's list is in the profile notes), including via
@@ -158,14 +161,35 @@ Cursor window** (`cursor "<WT>/eng-NNN"`):
 
 ### 3.5 Stack profile notes (this repo)
 
-- **No established toolchain yet.** This repo runs the generic profile (`ai.stack: generic`) — there is no language-specific setup command, dev-server pane, formatter, or codegen loop wired in.
-- **Setup command.** None — run whatever this repo's own README/CI documents, if anything.
-- **Dev loop.** Pane 0 (the agent) is the whole session until this repo adopts a real stack profile with its own dev-server/test-watch panes.
-- **Generated files.** None known. If this repo establishes a codegen loop later, list it here (or move to a real stack profile that already documents one).
-- **Project skills.** `/stack-check` (generic variant — the dependency-approval and generated-files checks are no-ops until this repo has real stack content).
+- **Setup.** `uv sync` per worktree — fast via uv's shared cache, the analog of per-worktree
+  `pnpm install`. `--no-setup` skips it.
+- **Multi-process dev loop.** Four things, not one dev server: pane 0 `claude`, pane 1
+  `uv run prefect server start`, an extra pane `uv run prefect worker start --pool <pool-name>`,
+  pane 2 `uv run ptw .` (pytest-watcher). This ordered set is the repo's
+  committed `workflow.panes`.
+- **Postgres is external.** The dev loop does not start Postgres — start it from a
+  checkout of the app-schema owner repo (it owns the Postgres + message-queue-extension +
+  app-schema container) and point the app-DB and Prefect metadata DB connection env vars at it.
+  `cwft`'s `workflow.services` preflight only checks reachability and warns; it does not start
+  Postgres.
+- **Fixed Prefect port.** The server binds `4200` — set `PREFECT_SERVER_API_PORT` per worktree for
+  parallel servers.
+- **Bring-up order** (native, idempotent): `uv sync` → `ops-cli init-db` →
+  `ops-cli migrate` → start server → `ops-cli sync` → start worker.
+- **No ORM codegen; migrations are hand-authored.** The hand-authored-migration schema is plain
+  ordered SQL applied by the ops CLI migrate — a feature (DBA-auditable), not a generated
+  artifact. The two edit→apply loops: hand-authored SQL → ops-CLI migrate, and Prefect
+  deployments → ops-CLI sync.
+- **Generated files (never hand-edit).** `uv.lock` (regen `uv lock`), `specs/contracts/*` (vendored,
+  regen `scripts/sync-contracts.sh`), CycloneDX SBOM — not the migrations.
+- **Project skills.** `/stack-check`.
 - **Escalation harness.** `Plan` agent / plan mode.
-- **Changesets.** None assumed.
-- **Editor extensions.** None — the `.vscode/` baseline shipped here is stack-agnostic (no language extensions or formatter binding).
+- **Changesets.** None — lockstep repo versioning; the jobs bundle pins the exact
+  platform/Prefect version.
+- **Boundaries.** Approved stack only; air-gapped-first (no CDN/PyPI at runtime; pinned `uv.lock`);
+  job state lives in the jobs-state schema; the app schema is read only through the vendored
+  `specs/contracts/` snapshot (C1).
+- **Editor extensions.** Ruff (Python lint+format), Python (Pylance), Prettier (Markdown only).
 
 
 ---
@@ -178,7 +202,7 @@ over.
 
 ### 4.1 Pick the next unblocked issue
 
-Respect the dependency graph in the plan doc(s) `(none)`. `/phase` resolves the phase/issue
+Respect the dependency graph in the plan doc(s) `specs/plans/*-PLAN*.md`. `/phase` resolves the phase/issue
 argument to the exact issue(s) this one PR closes, sets it **In Progress**, and reads its
 acceptance criteria — that's the DoD.
 
@@ -213,9 +237,8 @@ generated files** — regenerate via the stack's loop.
 Build test-first where practical: **write the test from the acceptance criteria, watch it fail,
 implement until green**, using this stack's test stack:
 
-> No stack-specific test harness is assumed. Use whatever test framework
-fits this repo's language(s); keep tests colocated with the code they
-cover and wire them into this repo's own gate command.
+> pytest + prefect_test_harness + respx (httpx mocking). Run `uv run pytest` from
+the repo root.
 
 
 Mock the data/tenancy or network boundaries for unit tests; reserve a live DB / real backend for e2e.
@@ -225,7 +248,7 @@ Mock the data/tenancy or network boundaries for unit tests; reserve a live DB / 
 Commit at **logical checkpoints**, small and often, on the issue branch (never on `main`). Small
 commits make the escape hatch (§8) and bot review cheap. Follow repo commit conventions; commits
 authored in a Claude session carry the
-`Co-Authored-By: Claude <noreply@anthropic.com>` trailer.
+`Co-Authored-By: Common Workflow Agent <noreply@powderhorns.biz>` trailer.
 
 ### 4.7 Local Definition of Done (must be green before the PR)
 
@@ -233,14 +256,14 @@ Run this stack's **local gates** (working directory per this repo's profile note
 varies by stack):
 
 ```bash
-true
+uv lock --check && uv run ruff check . && uv run mypy && uv run pytest && uv build --all-packages
 ```
 
 Plus: **`/stack-check origin/main...HEAD` clean**; **no codegen drift** if the schema/API surface was touched (the
 stack's codegen loop produces no new output on a clean tree); a **changeset** for version-affecting
 changes if this stack requires them (see profile notes); and the issue's own acceptance criteria
 demonstrably met. For endpoint/UI changes, **verify against the running app/server**:
-(none) — not just via tests.
+uv build — not just via tests.
 
 ### 4.8 Open the PR
 
@@ -250,9 +273,10 @@ gh pr create --base main --fill   # title references the issue; body links it
 ```
 
 - **Link the issue** so merge auto-closes it: the Linear branch name auto-links, and/or put
-  `Closes ISSUE-NNN` (Linear magic word) in the PR body.
-- **Keep PRs reasonably scoped** — one sub-step; the PR is the progress/close gate.
-- Open as a normal PR (or draft while iterating).
+  `Closes DEV-NNN` (Linear magic word) in the PR body.
+- **Keep PRs reasonably scoped** — one sub-step. CodeRabbit and Macroscope both review better on
+  focused diffs, and the PR is the progress/close gate.
+- Open as a normal PR (or draft while iterating). Then run the **review-bot sequence** in §7.
 
 ---
 
@@ -268,10 +292,12 @@ gh pr create --base main --fill   # title references the issue; body links it
 [ ] TDD: test from acceptance → fail → implement → green
 [ ] Codegen/sync per this stack (never hand-edit generated files) — see profile notes
 [ ] Small commits at checkpoints (issue branch only)
-[ ] Gates (working directory per profile notes): true
+[ ] Gates (working directory per profile notes): uv lock --check && uv run ruff check . && uv run mypy && uv run pytest && uv build --all-packages
 [ ] /stack-check origin/main...HEAD clean; no codegen drift (if schema/API touched); changeset if this stack needs one
-[ ] Verify in the running app/server ((none)) for endpoint/UI changes
-[ ] Push; gh pr create; body: "Closes ISSUE-NNN"
+[ ] Verify in the running app/server (uv build) for endpoint/UI changes
+[ ] Push; gh pr create; body: "Closes DEV-NNN" + "@coderabbitai ignore" (REQUIRED — re-fetch body & confirm the line is present, else CodeRabbit reviews early)
+[ ] Macroscope review → fix/justify all → add `skip-review` label
+[ ] Comment "@coderabbitai fullreview" → fix/justify all
 [ ] Human approves + merges; issue → Done; remove worktree
 ```
 
@@ -279,13 +305,59 @@ gh pr create --base main --fill   # title references the issue; body links it
 
 ## 6. Phasing and sequencing
 
-Take phasing and sequencing from the plan doc(s) `(none)`, which is generally supplied by your
+Take phasing and sequencing from the plan doc(s) `specs/plans/*-PLAN*.md`, which is generally supplied by your
 prompt (and by the `/phase` argument). Run independent issues in parallel worktrees; respect the
 plan's dependency edges, and don't fan out past a barrier/join point prematurely.
 
 ---
 
+## 7. Review-bot sequence (CodeRabbit + Macroscope)
 
+Both bots are wired to PRs. To avoid duplicate/competing findings, run them **one at a time** — this
+is the standing review sequence for the repo.
+
+**Waiting for the bots (they're slow).** Don't busy-poll. CodeRabbit posts an **"Estimated code
+review effort"** in its first comment — use it as the starting estimate for how long to wait. In
+general **poll about once per minute** (e.g. `gh pr checks <pr>`), not faster.
+
+**Macroscope's check status can lie.** Its `Approvability`/`Correctness` checks can report **pass (or
+skip)** while a real finding still sits on an **unresolved review thread** — a green check ≠ zero
+findings. When waiting on Macroscope, poll the PR's **review threads** (`gh pr view <pr> --comments`),
+not just `gh pr checks`; call it done only when the threads are resolved.
+
+**Resolving findings (applies to both bots).** For every finding you **fix**: reply
+**`fixed by git commit <hash>`** (the commit that addresses it) and then **mark the comment
+resolved**. For every finding you **won't** fix: reply with a short justification and resolve it.
+This keeps the review state clean and lets each bot re-review only what's left — speeding the loop.
+
+**On the PR, in order:**
+
+1. **Open the PR with a `@coderabbitai ignore` line in the PR body.** CodeRabbit sits out.
+   > ⚠️ **Easy to forget — verify it's there.** Put `@coderabbitai ignore` in the body **at
+   > `gh pr create` time** (e.g. `--body $'…\n\n@coderabbitai ignore'`). If you omit it, CodeRabbit
+   > reviews immediately and **both bots run concurrently** (the exact duplicate-findings problem
+   > this sequence avoids). The bots only edit inside their own summary markers, so they will **not**
+   > add or strip this line — it's on you. After creating the PR, re-fetch the body and confirm the
+   > line is present; if it's missing, `gh pr edit <pr> --body` to add it before CodeRabbit starts.
+2. **Work the Macroscope review.** Address every finding — **fix it or justify it**, then reply
+   `fixed by git commit <hash>` (or your justification) and **resolve the comment**.
+3. **When Macroscope is resolved, add the `skip-review` label** to the PR. Macroscope stops
+   reviewing.
+4. **Add a PR comment containing `@coderabbitai fullreview`.** This triggers CodeRabbit.
+5. **Work the CodeRabbit review** the same way — fix or justify each finding, replying
+   `fixed by git commit <hash>` and **resolving** each comment.
+6. **Human approval + merge.** Once CI required checks are green and both bots are satisfied, the
+   human driver gives final approval and merges. **Claude does not auto-merge.**
+
+**Trivial PRs (doc/stamp-only, no logic).** When a PR has nothing for the bots to meaningfully review
+(doc-only, a generated re-stamp, a config bump), stop after step 3: leave the
+`skip-review` label **on through merge** and **skip step 4** (don't run
+`@coderabbitai fullreview`). The `@coderabbitai ignore` line already keeps CodeRabbit out; Macroscope still runs but
+typically finds nothing, so CodeRabbit is skipped entirely instead of adding noise. Run the **full**
+sequence above for any PR with real logic.
+
+After merge: confirm the Linear issue moved to **Done** (auto via `Closes DEV-NNN`/branch link; set
+it manually if not), then clean up the worktree (§3).
 
 ---
 
@@ -305,11 +377,11 @@ back without losing work.
 
 **Suspend (Claude or human triggers):**
 
-1. **WIP-commit** everything on the branch: `git add -A && git commit -m "wip(ISSUE-NNN): <where I am>"`.
+1. **WIP-commit** everything on the branch: `git add -A && git commit -m "wip(DEV-NNN): <where I am>"`.
 2. **Write a handoff note** to `HANDOFF.md` at the worktree root:
 
    ```markdown
-   # HANDOFF — ISSUE-NNN
+   # HANDOFF — DEV-NNN
    - **Goal / acceptance:** <the issue's DoD>
    - **Done so far:** <what works, what's committed>
    - **Stuck on:** <the specific failure, with the exact error / file:line>
@@ -324,7 +396,7 @@ back without losing work.
 the worktree in Cursor, fix it, commit to the issue branch, and update `HANDOFF.md` with what
 changed. Don't use Cursor's Agent on the worktree while Claude is still live.
 
-**Resume:** relaunch Claude in that worktree with *"Read `HANDOFF.md` and resume ISSUE-NNN from
+**Resume:** relaunch Claude in that worktree with *"Read `HANDOFF.md` and resume DEV-NNN from
 there."* Before opening the PR, **delete `HANDOFF.md`** (it's a scratch artifact; keep it out of the
 final diff — it's fine on intermediate WIP commits).
 
@@ -354,13 +426,16 @@ dumping the whole plan; be specific and course-correct early rather than letting
   this for you.
 - **TDD where practical** — test from acceptance criteria, fail, implement, pass.
 - **Small, frequent commits and PRs** — one sub-step per PR; it's the review unit and the close gate.
-- **Let Claude verify itself** — it has the gates (`true`, `/stack-check`) and the
-  running app/server ((none)). Make it prove the DoD.
+- **Let Claude verify itself** — it has the gates (`uv lock --check && uv run ruff check . && uv run mypy && uv run pytest && uv build --all-packages`, `/stack-check`) and the
+  running app/server (uv build). Make it prove the DoD.
 - **Respect the boundaries every time** — air-gap (no CDNs/SaaS at runtime), this stack's core
   pattern and boundaries, and generated files (regenerate, never hand-edit). `/stack-check` is the
   backstop.
 - **Use `AskUserQuestion` for judgment calls**, the escape hatch for derailment, and a human merge
   for every PR.
+- **Review bots are slow — don't busy-poll.** Use CodeRabbit's *Estimated code review effort* (its
+  first comment) as the wait estimate; poll ~once a minute. Per fixed finding, reply
+  `fixed by git commit <hash>` and **resolve** the comment. (§7)
 - **Keep the docs honest** — when execution reveals the plan/specs are wrong, update them (and this
   playbook's source template) as part of the PR.
 
@@ -372,7 +447,7 @@ dumping the whole plan; be specific and course-correct early rather than letting
 
 ```bash
 # per-PR runbook (the standard path)
-/phase ISSUE-NNN
+/phase DEV-NNN
 
 # new worktree + tmux session for an issue (branch name from Linear) — what /phase orchestrates
 cwft session new "$BRANCH"
@@ -384,12 +459,17 @@ cd "<WT>/$ID"     # then run the stack setup (see §3.5 profile notes)
 cursor "<WT>/$ID"
 
 # local gates (the per-PR DoD) — working directory varies by stack, see §3.5 profile notes
-true
+uv lock --check && uv run ruff check . && uv run mypy && uv run pytest && uv build --all-packages
 # + /stack-check origin/main...HEAD   (+ the stack's codegen loop shows no drift if schema/API changed)
 
-# open the PR
+# open the PR (CodeRabbit paused; see §7 for the full bot sequence)
 git push -u origin "$BRANCH"
-gh pr create --base main --fill
+gh pr create --base main --fill --body $'Closes DEV-NNN\n\n@coderabbitai ignore'
+
+# bot sequence: work Macroscope → add `skip-review` label →
+gh pr comment <pr> --body "@coderabbitai fullreview"     # then work CodeRabbit → human merges
+# bots are slow: poll ~1×/min (gh pr checks <pr>); CodeRabbit's first comment has an
+# "Estimated code review effort". Per fixed finding: reply "fixed by git commit <hash>" + resolve it.
 
 # cleanup after merge
 git worktree remove "<WT>/$ID" && git branch -d "$BRANCH"
