@@ -30,10 +30,16 @@ wrapper resolves at runtime via `security find-generic-password`.
 ## Creating an item
 
 Items are created with `-A` (always-allow), so a headless launchd invocation
-can read the item without ever hitting a GUI access-control prompt:
+can read the item without ever hitting a GUI access-control prompt. **Don't
+paste the secret value literally into the command** — it would land in shell
+history and briefly appear in the process list. Read it into a variable
+first (`read -rs` doesn't echo the input or write it to history), then
+reference the variable:
 
 ```
-security add-generic-password -a <item>-<field> -s mark-claw-<profile> -w '<secret-value>' -A
+read -rs value    # paste/type the secret; not echoed, not saved to history
+security add-generic-password -a <item>-<field> -s mark-claw-<profile> -w "$value" -A
+unset value
 ```
 
 - `-a` — account (the flattened `<item>-<field>` slug)
