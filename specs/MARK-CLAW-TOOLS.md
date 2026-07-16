@@ -73,7 +73,7 @@ Cross-platform invariant, verified for all four: **none of the recommended read 
 | **Fallback** | `search.messages` (user token, Tier 2, sees everything the user sees, ~10k-result ceiling, now flagged "legacy"); a bot token invited to selected channels via Socket Mode (loses DM coverage). *Rejected:* `korotovsky/slack-mcp-server` (browser xoxc/xoxd tokens — ToS gray zone); workspace exports (admin-only, public channels only); official Slack MCP (admin-configured, Slack-AI-gated). |
 | **Key finding** | **The 2025 rate-limit crackdown does not apply.** The 1 req/min · 15 msgs/request limits hit only apps "commercially distributed outside of the Marketplace" created after 2025-05-29; **internal customer-built apps are explicitly exempt** and keep ~50 req/min at up to 1,000 msgs/request. Additionally, enforcement against existing non-Marketplace installs was quietly dropped (live docs: existing installations "are not subject to the new posted limits"). |
 | **History** | Full workspace history (~5 months) — backfill at Tier 3 is minutes-to-hours of work. Paid plan = no 90-day visibility cap. |
-| **Auth** | App created in Mark's workspace, user-token install (plan allows member installs — interview-confirmed). Token in 1Password. |
+| **Auth** | App created in Mark's workspace, user-token install (plan allows member installs — interview-confirmed). Token in macOS Keychain. |
 | **Cost** | $0. |
 | **Risks** | If Slack ever reclassifies internal apps into the crackdown tier, 15-min polling caps at ~15 conversations/cycle — see Revisit Triggers. Workspace owners could later enable app-approval requirements. |
 | **Flag** | **VERIFIED** (exemption FAQ, rate-limit page re-fetched live this session to adjudicate a stale claim; member-install default). ASSUMED: reads never marking channels read (standard API behavior). |
@@ -101,7 +101,7 @@ Citations: <https://developers.mattermost.com/integrate/reference/personal-acces
 | **Recommended** | **Telethon** (v1.44+, actively maintained) with a **persistent StringSession** on the established personal account; api_id/api_hash from my.telegram.org. `iter_messages` for the 90-day backfill; 15-min `get_dialogs` + per-dialog incremental fetch. |
 | **Fallback** | TDLib (heavier, first-party); GramJS (staler — last publish Feb 2025). *Rejected:* Bot API — bots cannot see existing DM history, cannot enumerate dialogs, and only receive messages after being added; useless for monitoring Mark's own chats. Existing Telegram MCP servers (chigwell/, chaindead/) are maintained but ship send/delete tools — fork/restrict or write a thin read-only poller instead. |
 | **History** | Full (90-day requirement trivially met). |
-| **Auth** | One interactive login → StringSession stored in 1Password/state; never re-login repeatedly; real device info in session metadata. |
+| **Auth** | One interactive login → StringSession stored in state (api_id/api_hash in Keychain); never re-login repeatedly; real device info in session metadata. |
 | **Limits** | FloodWait errors carry explicit wait times; Telethon auto-sleeps <60 s. 15-min polling is far below thresholds. |
 | **Cost** | $0. |
 | **ToS/ban risk** | Telegram explicitly permits third-party clients via api_id; bans cluster around fresh accounts, VoIP numbers, and mass actions. Low-volume read-only polling on an established account is the lowest-risk MTProto profile. Mitigations: single long-lived session, no mass joins/scrapes, check @SpamBot if concerned. **Risk accepted by Mark (interview).** |
@@ -224,7 +224,9 @@ The channel abstraction (spec §3.5) gets one interface + per-channel adapters i
 - **Policy hedge (important):** Anthropic *paused* (not cancelled) a plan to split SDK usage into separate metered credits; weekly limits were introduced specifically to curb 24/7 background use. → Design every scheduled entry point to switch to `ANTHROPIC_API_KEY` billing with a one-line config change.
 
 ### 7.3 Secrets
-- **1Password CLI (`op`, installed — verified).** Config layer stores `op://vault/item/field` references; wrapper scripts resolve at runtime (`op run`). Satisfies spec §10 "credential references, not raw secrets where avoidable". Token files that must exist on disk (OAuth token caches, Telethon session, signal-cli data dir) live in the state layer, chmod 600, and are treated as rebuildable-by-relink secrets.
+- **macOS Keychain (`security` CLI, built-in — no install).** Config layer stores `keychain://service/account` references (service fixed to `mark-claw-<profile>`, account a flattened `<item>-<field>` slug — one keychain item per secret value); wrapper scripts resolve at runtime via `security find-generic-password -s <service> -a <account> -w`. Items live in the default **login keychain** (already unlocked for the whole login session, so unattended launchd agents can read them without an extra unlock step) and are created with `security add-generic-password -A` so no per-app access prompt ever blocks a headless run. Items are marked syncable so they follow to a second Mac via iCloud Keychain if enabled there. Satisfies spec §10 "credential references, not raw secrets where avoidable". Token files that must exist on disk (OAuth token caches, Telethon session, signal-cli data dir) live in the state layer, chmod 600, and are treated as rebuildable-by-relink secrets.
+- **`mc secret` CLI wrapper (arrives with B1).** A thin `mc_core` helper (`mc secret set/get/list`) around `security add-generic-password`/`find-generic-password` enforces the naming convention and the `-A` flag consistently; Stage A's initial credential setup runs raw `security` commands directly (mirroring the previous pattern of using `op` before wrappers existed), and later steps switch to `mc secret`.
+- **Backup/recovery.** Keychain has no cross-device recovery kit. `mc secret export` writes an age-encrypted blob of the full credential set to `~/.local/state/mark-claw/<profile>/secrets/backup.age`, refreshed after each provisioning or rotation; the age passphrase/recipient key is held by Mark and never written to disk.
 - **Pattern upgrade (from §12 framework research):** adopt Vellum's credential-isolation shape — secrets are resolved only inside the thin fetch/action wrappers (the code that talks to provider APIs), never passed into agent prompts or `claude -p` context. The agentic layer sees data files and wrapper commands, not tokens.
 
 ### 7.4 Local status dashboard (added 2026-07-05 — user decision)
@@ -245,7 +247,7 @@ Citations: <https://code.claude.com/docs/en/headless>; <https://support.claude.c
 | Read-only on chat | No write-capable calls in any chat poller; Telegram/Signal/MCP tools with send/delete are forked/allowlisted out. Verified: no read path marks messages read. |
 | No autonomous recording | Local capture is a manually-invoked CLI only; no scheduler entry may reference it. |
 | Per-source exclusion enforcement | Exclusions applied in the fetch layer (before content enters any pipeline): Slack/Mattermost channel IDs, Telegram/Signal chat IDs, Drive/OneDrive folder prefixes, meeting/series IDs, local whitelist. Blocked sources are never fetched at all. |
-| 3-way tooling/config/state split | Tooling: repo scripts/skills. Config: `~/.config/mark-claw/mark/` (accounts, `op://` refs, rules, exclusions, channels, schedules). State: `~/.local/state/mark-claw/mark/` (cursors: Slack conversation cursors, Mattermost `since`, Telegram message IDs, Drive page tokens, Graph delta links, GitHub since-timestamps; token caches; changelogs). |
+| 3-way tooling/config/state split | Tooling: repo scripts/skills. Config: `~/.config/mark-claw/mark/` (accounts, `keychain://` refs, rules, exclusions, channels, schedules). State: `~/.local/state/mark-claw/mark/` (cursors: Slack conversation cursors, Mattermost `since`, Telegram message IDs, Drive page tokens, Graph delta links, GitHub since-timestamps; token caches; changelogs). |
 | Pluggable notifications | Channel interface + adapters; Telegram first (§6). |
 | Graceful degradation | Every fetcher is independent; briefing assembles from whatever "inbox" files exist and notes gaps. |
 
@@ -264,7 +266,7 @@ Citations: <https://code.claude.com/docs/en/headless>; <https://support.claude.c
 | 7 | Zoom marketplace: create S2S OAuth app; enable cloud recording + "Create audio transcript" in settings | Zoom transcripts |
 | 8 | Figma: create scoped PAT (90-day expiry — calendar the rotation); collect team IDs from URLs | Figma signal |
 | 9 | Install VoiceInk; `brew install whisper-cpp`; pick/install a tap-capture CLI (audiotee) and pre-grant System Audio Recording + mic permissions | EOD voice + local capture |
-| 10 | Confirm Max subscription active; create a low-limit `ANTHROPIC_API_KEY` for the mechanical scans; store all secrets in 1Password | Runtime |
+| 10 | Confirm Max subscription active; create a low-limit `ANTHROPIC_API_KEY` for the mechanical scans; store all secrets in the macOS Keychain (`mark-claw-mark` service) | Runtime |
 
 ---
 
