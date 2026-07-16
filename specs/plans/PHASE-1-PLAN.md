@@ -28,19 +28,19 @@ Config/state/tooling skeletons with `mark` profile · vault + `VAULT-GUIDE.md` +
 
 All self-service (tools §0 — no third-party approvals). Console work proceeds at once; token flows depend on the `mc auth` helpers from B1.
 
-### A1 — 1Password vault + reference conventions
-**Lands:** 1Password (secrets) · repo (`docs/SECRETS.md` naming conventions — generic, no personal values) · config (`op://` refs appear in `accounts.yaml`/`sources.yaml` as later steps add them).
-**Do:** create 1P vault `mark-claw`; document item naming (`<provider>-<purpose>`, field `credential`); confirm `op` CLI signed in.
+### A1 — macOS Keychain conventions + backup
+**Lands:** macOS login keychain (secrets) · repo (`docs/SECRETS.md` naming conventions — generic, no personal values) · config (`keychain://` refs appear in `accounts.yaml`/`sources.yaml` as later steps add them) · state (`secrets/backup.age` seeded empty).
+**Do:** document item naming (service `mark-claw-mark`, account = flattened `<item>-<field>` slug, one keychain item per secret value); confirm `security` CLI reachable (built-in, no install). Stage A steps use raw `security` commands directly — `mc secret set/get/list` (B1) wraps this convention once the CLI skeleton exists. Establish the `mc secret export` → age-encrypted backup convention now (passphrase held by Mark, never written to disk); B1 implements the command, this step just reserves the state path and the passphrase-custody decision.
 **Accept:**
 ```
-op vault get mark-claw                      # exists
-op item create --vault mark-claw --title smoke-test --category password password=x
-op read "op://mark-claw/smoke-test/password"   # → x ; then delete the item
+security add-generic-password -a smoke-test -s mark-claw-mark -w x -A     # create, always-allow
+security find-generic-password -a smoke-test -s mark-claw-mark -w        # → x
+security delete-generic-password -a smoke-test -s mark-claw-mark          # clean up
 ```
 - [ ] Done · Linear: [DEV-5](https://linear.app/psols/issue/DEV-5)
 
 ### A2 — Google OAuth client + tokens for 3 Gmail accounts + work Drive (read-only scopes)
-**Lands:** GCP console (own project) · 1P (`google-oauth-client`) · state (`secrets/google/<account-id>/token.json`, 0600) · config (`accounts.yaml` entries with `client_ref` + `token_cache`). Nothing in repo.
+**Lands:** GCP console (own project) · Keychain (`mark-claw-mark`/`google-oauth-client-credential`) · state (`secrets/google/<account-id>/token.json`, 0600) · config (`accounts.yaml` entries with `client_ref` + `token_cache`). Nothing in repo.
 **Do:** new GCP project (under `mark@powderhorns.biz`); consent screen External, **publish to Production** (kills the 7-day Testing refresh-token expiry — tools §1); Desktop-app OAuth client; enable Gmail + Drive APIs. Scopes requested: `gmail.readonly`, `drive.readonly` (restricted scopes; personal-use/unverified exemption applies — proceed through the "unverified app" screen; for the two Workspace domains optionally mark the client trusted via admin console / `consoleops@`). Run `uv run mc auth google <id>` for `convoydefense`, `powderhorns`, `gmail-personal`.
 **Accept (per account):**
 ```
@@ -53,7 +53,7 @@ Also: consent screen status shows **In production**; token file contains no scop
 - [ ] Done · Linear: [DEV-6](https://linear.app/psols/issue/DEV-6)
 
 ### A3 — Entra app registration (jumpweb.net) + Graph token
-**Lands:** Entra portal · 1P (`entra-app`: client_id, tenant_id) · state (`secrets/msal/jumpweb/`) · config (`accounts.yaml` graph entry).
+**Lands:** Entra portal · Keychain (`mark-claw-mark`/`entra-app-client_id`, `mark-claw-mark`/`entra-app-tenant_id`) · state (`secrets/msal/jumpweb/`) · config (`accounts.yaml` graph entry).
 **Do:** app registration in jumpweb tenant; public client, "Allow public client flows" on; delegated scopes `Mail.Read`, `Files.Read`, `Calendars.Read`, `offline_access` (calendar added now to avoid Phase-3 re-consent; Phase 1 code never calls calendar). Self-grant admin consent. Device-code flow via `uv run mc auth graph jumpweb`.
 **Accept:**
 ```
@@ -64,11 +64,11 @@ uv run mc auth graph jumpweb --self-test
 - [ ] Done · Linear: [DEV-7](https://linear.app/psols/issue/DEV-7)
 
 ### A4 — Slack internal app + user token
-**Lands:** Slack app config · 1P (`slack-xoxp`).
+**Lands:** Slack app config · Keychain (`mark-claw-mark`/`slack-xoxp-credential`).
 **Do:** create internal app in the work workspace; user-token scopes exactly `channels:history, groups:history, im:history, mpim:history, channels:read, users:read` — **no `chat:write`, no `*.write`**. Install to workspace.
 **Accept:**
 ```
-tok=$(op read "op://mark-claw/slack-xoxp/credential")
+tok=$(security find-generic-password -a slack-xoxp-credential -s mark-claw-mark -w)
 curl -s -H "Authorization: Bearer $tok" https://slack.com/api/auth.test | jq .ok   # true
 # response header x-oauth-scopes lists only the 6 read scopes (no write scope present)
 curl -s -H "Authorization: Bearer $tok" "https://slack.com/api/conversations.list?limit=1" | jq .ok  # true
@@ -76,7 +76,7 @@ curl -s -H "Authorization: Bearer $tok" "https://slack.com/api/conversations.lis
 - [ ] Done · Linear: [DEV-8](https://linear.app/psols/issue/DEV-8)
 
 ### A5 — Mattermost PAT + edition check
-**Lands:** MM system console · 1P (`mattermost-pat`) · this plan (edition recorded).
+**Lands:** MM system console · Keychain (`mark-claw-mark`/`mattermost-pat`) · this plan (edition recorded).
 **Do:** enable `EnableUserAccessTokens`; issue PAT for Mark's account. **Confirm server edition** — if free "Entry" tier (v11+), history beyond most-recent 10k messages is hidden → backfill becomes urgent (run E2 for Mattermost first).
 **Accept:**
 ```
@@ -87,7 +87,7 @@ Edition recorded here: ______ · 10k-cap applies: yes/no
 - [ ] Done · Linear: [DEV-9](https://linear.app/psols/issue/DEV-9)
 
 ### A6 — Telegram api_id/hash + Telethon session
-**Lands:** 1P (`telegram-api`: api_id, api_hash) · state (`secrets/telegram/session`, 0600).
+**Lands:** Keychain (`mark-claw-mark`/`telegram-api-api_id`, `mark-claw-mark`/`telegram-api-api_hash`) · state (`secrets/telegram/session`, 0600).
 **Do:** my.telegram.org → api_id/api_hash; one interactive `uv run mc auth telegram` login (code via app) → persistent StringSession. Real device info in session metadata; never re-login repeatedly (tools §3.3).
 **Accept:**
 ```
@@ -112,7 +112,7 @@ stat -f "%Lp" <state>/secrets/signal    # 700
 
 ### B1 — Tooling repo skeleton + `mc` CLI + repo-hygiene test
 **Lands:** repo only (`pyproject.toml` (uv), `mc_core/`, `bin/`, `prompts/`, `tests/`, `docs/`).
-**Do:** uv-managed Python project; `mc` CLI entry point with subcommands stubbed (`doctor`, `auth`, `exclusions`, `fetch`, `ingest`, `guard`); `MC_PROFILE` env (default `mark`) resolves config/state roots — **no personal value hardcoded anywhere**. Hygiene test `tests/hygiene/`: greps the entire repo for personal-identifier patterns; the pattern list itself is personal, so the test reads patterns from `$CONFIG/hygiene-patterns.txt` (config layer) and **skips with a loud warning** if absent (so the repo stays cloneable).
+**Do:** uv-managed Python project; `mc` CLI entry point with subcommands stubbed (`doctor`, `auth`, `exclusions`, `fetch`, `ingest`, `guard`, `secret` — `set`/`get`/`list`/`export`, wraps `security add-generic-password`/`find-generic-password`/`dump-keychain` + age encryption for `export`); `MC_PROFILE` env (default `mark`) resolves config/state roots — **no personal value hardcoded anywhere**. Hygiene test `tests/hygiene/`: greps the entire repo for personal-identifier patterns; the pattern list itself is personal, so the test reads patterns from `$CONFIG/hygiene-patterns.txt` (config layer) and **skips with a loud warning** if absent (so the repo stays cloneable).
 **Dependency guard:** `pyproject.toml` contains no agent-framework packages (tools §12); test asserts the dependency list against a deny-list (`openclaw*, zeroclaw*, ironclaw*, picoclaw*, nemoclaw*, hermes*, vellum*`).
 **Accept:**
 ```
@@ -200,7 +200,7 @@ Manual: create a note on the Mac → appears on phone via Obsidian Sync within ~
 ## Stage D — Fetch wrappers (backfill mode, read-only by construction)
 
 ### D1 — Shared fetch base
-**Lands:** repo (`mc_core/fetch.py`: `fetch_items()` base — secret resolve via `op run`/`op read` inside the wrapper only, exclusion-gate call at enumeration, cursor read/write, spool JSONL writer per design §3.2 envelope, 3× retry with backoff honoring `Retry-After`/FloodWait, run-record write) · state (spool/cursors/runs written at runtime).
+**Lands:** repo (`mc_core/fetch.py`: `fetch_items()` base — secret resolve via `mc secret get` (wraps `security find-generic-password`) inside the wrapper only, exclusion-gate call at enumeration, cursor read/write, spool JSONL writer per design §3.2 envelope, 3× retry with backoff honoring `Retry-After`/FloodWait, run-record write) · state (spool/cursors/runs written at runtime).
 **Accept:**
 ```
 uv run pytest tests/unit/test_fetch_base.py
@@ -328,7 +328,7 @@ uv run mc ingest local --propose && uv run mc ingest local --apply
 | Exclusion hard guarantee | Gate at enumeration inside shared `fetch_items()`; output guard fail-closed on every writer; exclusions authored (B6) **before** first fetch (E gated on B6) | Unit tests (B3/B4), canary (B5), live blocked-channel grep (E2), full-vault scan (F1) |
 | No autonomous recording | No capture code exists in Phase 1 at all; no scheduler exists in Phase 1 at all | `grep -r audiotee\|ffmpeg mc_core bin → 0`; no plists installed |
 | No autonomous sending of anything | No notify layer, no send wrapper, no scheduler in Phase 1 — nothing runs unless Mark runs it | absence is the guarantee; re-verified structurally in Phase 2 when those layers land |
-| Secrets never in agent context | `op://` resolution + token reads only inside `mc_core/fetch.py`/auth helpers; `claude -p` calls receive file paths; log redaction pass | `tests/structural/test_secret_isolation.py` (prompt-assembly funcs take no secret args; grep for `op read` outside wrappers → 0) |
+| Secrets never in agent context | `keychain://` resolution + token reads only inside `mc_core/fetch.py`/auth helpers via `mc secret get`; `claude -p` calls receive file paths; log redaction pass | `tests/structural/test_secret_isolation.py` (prompt-assembly funcs take no secret args; grep for `security find-generic-password` outside `mc secret`/wrappers → 0) |
 | No personal data in repo | Profile via `MC_PROFILE`; hygiene grep with config-supplied patterns; example configs are placeholders | `tests/hygiene/` + B1 grep check |
 | No agent frameworks | Dependency deny-list test on `pyproject.toml` | B1 test |
 

@@ -31,7 +31,7 @@
 └────────────────────────────────────────────────────────────────────────┘
 ┌─ Tier 1: mechanical layer (Python, uv-managed, in repo bin/) ──────────┐
 │  Orchestrators: mc-sweep-15m, mc-sweep-hourly, mc-daily, mc-weekly     │
-│  Provider wrappers (secrets live ONLY here, via `op run`):             │
+│  Provider wrappers (secrets live ONLY here, via `security`/`mc secret`):│
 │    mc-fetch-gmail  mc-fetch-graph   mc-fetch-slack   mc-fetch-mm       │
 │    mc-fetch-tg     mc-fetch-signal  mc-fetch-github  mc-fetch-figma    │
 │    mc-fetch-drive  mc-fetch-onedrive mc-fetch-local  mc-fetch-meet     │
@@ -119,7 +119,7 @@ The trust boundary is the Tier-1 mechanical layer. Everything that touches crede
 
 ### 2.2 Credential isolation (borrowed pattern b — Vellum CES shape)
 
-- Config stores **only** `op://` references (tools §7.3). Wrappers resolve them at spawn via `op run` / `op read`; tokens exist as env vars inside the wrapper process only.
+- Config stores **only** `keychain://` references (tools §7.3). Wrappers resolve them at spawn via `security find-generic-password` (through the `mc secret get` helper once B1 lands); tokens exist as env vars inside the wrapper process only.
 - On-disk token material that must exist (OAuth token caches, Telethon StringSession, signal-cli data dir) lives in `state/secrets/` (0700 dir, 0600 files), read exclusively by wrappers.
 - **Nothing in Tier 2 ever sees a token**: `claude -p` prompts and `--allowedTools` contain data file paths and wrapper command names only. Wrappers never echo secrets; log formatter has a redaction pass keyed on resolved secret values as a belt-and-suspenders (secrets are compared by value against every log line before write).
 - The dashboard renders `state/` but is denied `state/secrets/` structurally: its file allowlist enumerates the directories it may read (§9.2).
@@ -373,13 +373,13 @@ email:
     address: mark@powderhorns.biz
     provider: gmail                    # gmail | graph
     auth:
-      client_ref: "op://mark-claw/gog-oauth-client/credential"
+      client_ref: "keychain://mark-claw-mark/gog-oauth-client-credential"
       token_cache: "$STATE/secrets/google/powderhorns/"   # 0600, rebuildable by re-auth
     roles: [mail]
   - id: jumpweb
     address: mark@jumpweb.net
     provider: graph
-    auth: {client_ref: "op://mark-claw/entra-app/client_id", token_cache: "$STATE/secrets/msal/jumpweb/"}
+    auth: {client_ref: "keychain://mark-claw-mark/entra-app-client_id", token_cache: "$STATE/secrets/msal/jumpweb/"}
     roles: [mail, calendar, onedrive]
 own_addresses: [mark@convoydefense.ai, mark@powderhorns.biz, mark@jumpweb.net, markfrommn@gmail.com]
 ```
@@ -462,9 +462,10 @@ No personal data, no secrets, nothing Mark-specific hard-coded — profile comes
 
 | Secret | Home | Notes |
 |---|---|---|
-| OAuth client IDs/secrets, Slack xoxp, MM PAT, TG api_id/hash + bot token, Zoom S2S, Figma PAT, Anthropic API key | 1Password, referenced as `op://` in config | Resolved inside wrappers only (§2.2) |
+| OAuth client IDs/secrets, Slack xoxp, MM PAT, TG api_id/hash + bot token, Zoom S2S, Figma PAT, Anthropic API key | macOS Keychain (login keychain, `mark-claw-mark` service), referenced as `keychain://` in config | Resolved inside wrappers only (§2.2) |
 | Google/MSAL token caches, Telethon StringSession, signal-cli data dir | `state/secrets/` 0700/0600 | Rebuildable by re-auth/relink |
-| `mc-send-self` credential | Separate 1Password item; token cache scoped to `gmail.send` **only** | See §7.3 — the send credential can't read, the read credentials can't send |
+| `mc-send-self` credential | Distinct keychain account `gmail-send-only` on the same `mark-claw-mark` service; token cache scoped to `gmail.send` **only** | See §7.3 — the send credential can't read, the read credentials can't send |
+| Full credential set (backup) | `state/secrets/backup.age` (age-encrypted, refreshed on provision/rotation) | Passphrase held by Mark, never on disk — see tools §7.3 |
 
 ---
 
@@ -521,7 +522,7 @@ No receive path, no webhook listener, no polling for replies — a two-way chat 
 channels:
   - id: tg-mark
     kind: telegram-bot
-    token_ref: "op://mark-claw/telegram-bot/token"
+    token_ref: "keychain://mark-claw-mark/telegram-bot-token"
     chat_id: 123456789          # obtained once via getUpdates after /start (tools §6)
 routing:
   urgent: [tg-mark]             # problem-class email/chat alerts
@@ -622,7 +623,7 @@ Is "Dana Kim <dana@…>" a real contact? Two borderline threads this month.
 | No autonomous recording | `mc-capture` has no launchd entry and is referenced by no orchestrator; `mc install-schedules` refuses a schedule naming it | §1.3 |
 | Exclusion hard guarantee | Fetch gate at enumeration inside shared fetch path (§5.2) + fail-closed output guard on every writer (§5.4) + canary/continuous tests (§5.5) | §5 |
 | Notifications one-way | `Channel` interface has `send()` only; no inbound listener exists anywhere | §8.1 |
-| Secrets never in agent context | `op://` refs resolve inside wrappers; Tier-2 `--allowedTools` = data paths + wrapper commands; dashboard directory allowlist excludes `secrets/` | §2.2 |
+| Secrets never in agent context | `keychain://` refs resolve inside wrappers; Tier-2 `--allowedTools` = data paths + wrapper commands; dashboard directory allowlist excludes `secrets/` | §2.2 |
 | Local scan = whitelist only | Scan roots read exclusively from `local-whitelist.yaml`; no discovery code path outside them | §5.2 |
 | No personal data in tooling | Profile via env; config/state under XDG per-profile dirs; canary suite includes a repo grep for personal identifiers | §6.3 |
 | Auditability | Closed-enum changelog written by every acting pipeline; `mc log` + dashboard render it | §4.4 |

@@ -19,7 +19,7 @@ These are **structural**, not advisory: each is enforced by a fact of the tool s
 | **Read-only on chat** | Pollers implement no post/react/mark-read call. API-method allowlists per platform; the Telethon wrapper exposes no send surface. |
 | **No autonomous recording** | `mc-capture` is on-demand only. No launchd entry may reference it; `mc install-schedules` refuses a schedule naming it. |
 | **Exclusion enforcement is absolute** | Fetch gate at enumeration inside the shared fetch path + fail-closed output guard on every writer. A blocked source appears in no output, log, or vault artifact. |
-| **Secrets never reach agent context** | `op://` refs resolve inside wrappers only. `claude -p` receives file paths and content, never credentials. |
+| **Secrets never reach agent context** | `keychain://` refs resolve inside wrappers only (macOS Keychain via `security`). `claude -p` receives file paths and content, never credentials. |
 | **Local scan is whitelist-only** | Scan roots read exclusively from `local-whitelist.yaml`. No code path accepts a root argument. |
 | **No personal data in this repo** | Profile comes from `MC_PROFILE` (default `mark`); all personal values live in config. `specs/` is a **known, accepted exception** — it predates the split and contains real domains. |
 | **No agent frameworks** | Evaluated and declined (design §preamble, tools §12). A dependency deny-list test guards `pyproject.toml`. |
@@ -46,7 +46,7 @@ Two principles drive most design questions:
 | Layer | Home | Contents |
 | --- | --- | --- |
 | **Tooling** | this repo | Skills, pipelines, prompts, schedulers, docs, specs. No personal data, no secrets. |
-| **Config** | `~/.config/mark-claw/<profile>/` | Accounts, `op://` credential refs, rules, exclusion lists, local whitelist, schedules, vault path. Human-readable, hand-editable. |
+| **Config** | `~/.config/mark-claw/<profile>/` | Accounts, `keychain://` credential refs, rules, exclusion lists, local whitelist, schedules, vault path. Human-readable, hand-editable. |
 | **State** | `~/.local/state/mark-claw/<profile>/` | Cursors, spool, caches, changelogs, learned examples. Rebuildable without losing config. |
 
 Tooling upgrades must never require touching config or state. Wiping state must cost only a re-scan.
