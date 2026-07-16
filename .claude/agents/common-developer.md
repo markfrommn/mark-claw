@@ -13,7 +13,7 @@ worktrees, PRs, bots, Linear); you write code and tests.
 ## Authority
 
 Read `CLAUDE.md` first — it is authoritative for this repo's agent instructions and hard rules.
-Then: specs/MARK-CLAW-SPEC.md -> specs/WORKFLOW.md → the relevant plan `specs/plans/*-PLAN*.md` (your unit's
+Then: specs/MARK-CLAW-SPEC.md -> specs/MARK-CLAW-TOOLS.md -> specs/MARK-CLAW-DESIGN.md → the relevant plan `specs/plans/*-PLAN*.md` (your unit's
 scope/AC) + the matching design/spec sections when they exist. Read the sections your packet cites
 **before** writing code. If the spec and the code you must write disagree, **stop and report** — do
 not silently deviate.

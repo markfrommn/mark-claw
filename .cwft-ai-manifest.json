@@ -18,7 +18,7 @@
       "generator": "claude",
       "rendered": true,
       "mode": "0640",
-      "sha256": "0bc9795b77c6191091678b22aefd235e8892223684a38c21c3a0cb7af7baf9f1"
+      "sha256": "5b775a146a0fc74fdac28fcc74ca372236a20d1cda4577a6aba81fda4feff077"
     },
     {
       "path": ".claude/agents/common-quality-reviewer.md",
@@ -26,7 +26,7 @@
       "generator": "claude",
       "rendered": true,
       "mode": "0640",
-      "sha256": "d57ce36f9e532cfe84203ae1baae3c5634b90d6e791a4b1b44fb993f454a3d4f"
+      "sha256": "9d0221b41bedc16e8b8fbc0eac6862053d37d74978b1f9404053d09f23235ecd"
     },
     {
       "path": ".claude/agents/debugger.md",
@@ -226,7 +226,7 @@
       "generator": "claude",
       "rendered": true,
       "mode": "0640",
-      "sha256": "9b68da3b128c76b44667b714590798de205d1e082b2379d97ad975d9eb7b755d"
+      "sha256": "d40a5e7c8f3d82b42f96789df3d14156b831c0d94133b4f21db8c2604b52cf56"
     },
     {
       "path": ".cursor/rules/common-workflow.mdc",
@@ -274,7 +274,7 @@
       "generator": "specs",
       "rendered": true,
       "mode": "0640",
-      "sha256": "da8add2d52d9d6badf7e4532f94113c8668de86cedcc153136f8c0a981ee8923"
+      "sha256": "c1af740d557085ce87dede954cf5ff180a47045f382f639be614e4e78de68062"
     }
   ]
 }

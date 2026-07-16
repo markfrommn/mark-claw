@@ -3,7 +3,7 @@ ai:
   values:
     repo_display: mark-claw
     plan_docs: specs/plans/*-PLAN*.md
-    authority_docs:  specs/MARK-CLAW-SPEC.md -> specs/WORKFLOW.md
+    authority_docs:  specs/MARK-CLAW-SPEC.md -> specs/MARK-CLAW-TOOLS.md -> specs/MARK-CLAW-DESIGN.md
     verify: "uv build"
     linear_projects:
       - "[Agentic and AI Tooling](https://linear.app/psols/project/agentic-and-ai-tooling-ea2f10db893e)"

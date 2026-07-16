@@ -4,3 +4,6 @@ __pycache__/
 /.venv/
 /dist/
 #END cwft-ai
+
+# local scratch — reference material, not tracked
+/raw/

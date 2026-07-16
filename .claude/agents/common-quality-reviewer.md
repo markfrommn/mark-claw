@@ -14,7 +14,7 @@ bots (Macroscope, CodeRabbit) and the human merger would flag — earlier and ch
 
 The prompt names the unit (a phase/milestone label or a Linear issue id). Resolve it to the plan
 that owns it and read its section in `specs/plans/*-PLAN*.md` (scope + acceptance criteria) and
-the design/spec sections it cites, plus the authority docs (specs/MARK-CLAW-SPEC.md -> specs/WORKFLOW.md). The
+the design/spec sections it cites, plus the authority docs (specs/MARK-CLAW-SPEC.md -> specs/MARK-CLAW-TOOLS.md -> specs/MARK-CLAW-DESIGN.md). The
 diff under review is `git diff origin/main...HEAD` (use `--stat` first, then read the touched
 files) — the three-dot form scopes the diff to this branch's changes since the merge base, not
 whatever else has landed on `origin/main` since the branch was cut. Per the pre-PR DoD the branch is

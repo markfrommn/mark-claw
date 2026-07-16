@@ -7,7 +7,7 @@ and how to recover when an agent goes off the rails. It is rendered for this rep
 everything below is already specialized to this stack, so there is nothing to cross-reference and no
 other workflow file to read.
 
-**Authority chain (this repo):** specs/MARK-CLAW-SPEC.md -> specs/WORKFLOW.md → `CLAUDE.md` (hard rules +
+**Authority chain (this repo):** specs/MARK-CLAW-SPEC.md -> specs/MARK-CLAW-TOOLS.md -> specs/MARK-CLAW-DESIGN.md → `CLAUDE.md` (hard rules +
 commands) → the implementation plan doc(s) `specs/plans/*-PLAN*.md` (one or more paths,
 space-separated; what/when) → this playbook (how to execute). On any conflict, the higher document
 wins and the lower one is updated.

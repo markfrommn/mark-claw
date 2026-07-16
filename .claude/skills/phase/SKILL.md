@@ -11,7 +11,7 @@ You are the **orchestrator** for one unit of work (one PR) of the mark-claw
 build. You sequence the work and verify it; you do **not** write implementation code — the
 `common-developer` agent does. Read `CLAUDE.md` first — it is authoritative for this repo's agent
 instructions and hard rules (process/execution constraints). For scope/behavior, the authority
-chain is: specs/MARK-CLAW-SPEC.md -> specs/WORKFLOW.md → the relevant plan doc(s) `specs/plans/*-PLAN*.md`
+chain is: specs/MARK-CLAW-SPEC.md -> specs/MARK-CLAW-TOOLS.md -> specs/MARK-CLAW-DESIGN.md → the relevant plan doc(s) `specs/plans/*-PLAN*.md`
 (this unit's section; `plan_docs` is one or more paths, space-separated) → the rendered
 `specs/WORKFLOW.md` (process). On conflict within that chain, the
 higher doc wins; escalate with `AskUserQuestion` before deviating.
@@ -60,7 +60,7 @@ Bring up the working branch in a git worktree so this repo stays usable on `main
 
 ## 2. Build the context packet and delegate
 
-Spawn the `common-developer` agent (Sonnet for typical job/platform work, Opus for spec/architectural phases) with a context packet containing: the phase scope, the acceptance criteria, and the authority chain it must read first (`specs/MARK-CLAW-SPEC.md -> specs/WORKFLOW.md` → the relevant plan).
+Spawn the `common-developer` agent (Sonnet for typical job/platform work, Opus for spec/architectural phases) with a context packet containing: the phase scope, the acceptance criteria, and the authority chain it must read first (`specs/MARK-CLAW-SPEC.md -> specs/MARK-CLAW-TOOLS.md -> specs/MARK-CLAW-DESIGN.md` → the relevant plan).
 
 Restate the standing constraints for this stack:
 - Prefect-native plain-Python jobs; air-gapped first (bundled wheels, pinned `uv.lock`, no runtime PyPI/CDN).
