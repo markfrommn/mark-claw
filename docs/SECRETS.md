@@ -31,15 +31,17 @@ wrapper resolves at runtime via `security find-generic-password`.
 
 Items are created with `-A` (always-allow), so a headless launchd invocation
 can read the item without ever hitting a GUI access-control prompt. **Don't
-paste the secret value literally into the command** — it would land in shell
-history and briefly appear in the process list. Read it into a variable
-first (`read -rs` doesn't echo the input or write it to history), then
-reference the variable:
+pass the secret value as a `-w` argument** — even via a shell variable, it's
+still visible in the process list (`ps`) for the life of the command, not
+just shell history. Instead put `-w` **last with no value following it**;
+`security` then prompts twice (entry + confirmation) without echoing, per
+its own usage text ("Use of the -p or -w options is insecure. Specify -w as
+the last option to be prompted."):
 
-```
-read -rs value    # paste/type the secret; not echoed, not saved to history
-security add-generic-password -a <item>-<field> -s mark-claw-<profile> -w "$value" -A
-unset value
+```sh
+security add-generic-password -a <item>-<field> -s mark-claw-<profile> -A -w
+# password data for new item: <type the secret, not echoed>
+# retype password for new item: <type it again>
 ```
 
 - `-a` — account (the flattened `<item>-<field>` slug)
@@ -59,7 +61,7 @@ is for, not iCloud sync.
 
 ## Reading and deleting an item
 
-```
+```sh
 security find-generic-password -a <item>-<field> -s mark-claw-<profile> -w
 security delete-generic-password -a <item>-<field> -s mark-claw-<profile>
 ```
@@ -84,7 +86,7 @@ The macOS Keychain has no cross-device recovery kit of its own. The plan is
 for `mc secret export` (arriving with `mc secret set/get/list` in B1 /
 DEV-12) to write an age-encrypted blob of the full credential set to:
 
-```
+```text
 ~/.local/state/mark-claw/<profile>/secrets/backup.age
 ```
 
@@ -101,7 +103,7 @@ with B1.
 
 Smoke-test the round trip without leaving a permanent item behind:
 
-```
+```sh
 security add-generic-password -a smoke-test -s mark-claw-mark -w x -A     # create, always-allow
 security find-generic-password -a smoke-test -s mark-claw-mark -w        # → x
 security delete-generic-password -a smoke-test -s mark-claw-mark          # clean up
