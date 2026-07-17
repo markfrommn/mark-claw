@@ -12,7 +12,7 @@ no personal data, so every example below uses generic placeholders
 ## Naming convention
 
 - **Service** is fixed per profile: `mark-claw-<profile>`. The profile
-  defaults to `mark` (`MC_PROFILE`, per `CLAUDE.md`'s config/state layout), so
+  defaults to `mark` (`MCLAW_PROFILE`, per `CLAUDE.md`'s config/state layout), so
   the default service is `mark-claw-mark`.
 - **Account** is a flattened `<item>-<field>` slug — one keychain item per
   secret *value*. If a credential has multiple parts (e.g. a client ID and a
@@ -69,21 +69,21 @@ security delete-generic-password -a <item>-<field> -s mark-claw-<profile>
 `find-generic-password -w` prints only the secret value to stdout, suitable
 for capturing into a variable in a wrapper script.
 
-## Stage A: raw `security` commands, then `mc secret`
+## Stage A: raw `security` commands, then `mclaw secret`
 
 Stage A's initial credential provisioning (Google OAuth, Entra, Slack,
 Mattermost, Telegram, etc.) runs these `security` commands directly — there
-is no CLI yet to wrap them. Once the `mc` CLI skeleton lands (DEV-12 / B1),
-`mc secret set` / `mc secret get` / `mc secret list` will wrap this same
+is no CLI yet to wrap them. Once the `mclaw` CLI skeleton lands (DEV-12 / B1),
+`mclaw secret set` / `mclaw secret get` / `mclaw secret list` will wrap this same
 service/account convention (enforcing the `-A` flag and the naming scheme
-consistently) and later steps will switch to it. Do not invent `mc secret`
+consistently) and later steps will switch to it. Do not invent `mclaw secret`
 syntax before that CLI exists — for now, use raw `security` commands as shown
 above.
 
 ## Backup and recovery
 
 The macOS Keychain has no cross-device recovery kit of its own. The plan is
-for `mc secret export` (arriving with `mc secret set/get/list` in B1 /
+for `mclaw secret export` (arriving with `mclaw secret set/get/list` in B1 /
 DEV-12) to write an age-encrypted blob of the full credential set to:
 
 ```text

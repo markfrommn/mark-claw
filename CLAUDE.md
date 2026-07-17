@@ -15,13 +15,13 @@ These are **structural**, not advisory: each is enforced by a fact of the tool s
 | Rule | Structural enforcement |
 | --- | --- |
 | **Never hard-delete** | Wrappers implement no `messages.delete` / Graph `DELETE`. Deletion happens only by moving 30-day-aged junk to provider Trash/Spam; the provider's retention deletes it. |
-| **Never send autonomously** | Read wrappers implement no send endpoint. Email drafts only (`drafts.create`). The sole send path is `mc-send-self`, whose token is `gmail.send`-scope-only and whose recipients must ⊆ `own_addresses`. |
+| **Never send autonomously** | Read wrappers implement no send endpoint. Email drafts only (`drafts.create`). The sole send path is `mclaw-send-self`, whose token is `gmail.send`-scope-only and whose recipients must ⊆ `own_addresses`. |
 | **Read-only on chat** | Pollers implement no post/react/mark-read call. API-method allowlists per platform; the Telethon wrapper exposes no send surface. |
-| **No autonomous recording** | `mc-capture` is on-demand only. No launchd entry may reference it; `mc install-schedules` refuses a schedule naming it. |
+| **No autonomous recording** | `mclaw-capture` is on-demand only. No launchd entry may reference it; `mclaw install-schedules` refuses a schedule naming it. |
 | **Exclusion enforcement is absolute** | Fetch gate at enumeration inside the shared fetch path + fail-closed output guard on every writer. A blocked source appears in no output, log, or vault artifact. |
 | **Secrets never reach agent context** | `keychain://` refs resolve inside wrappers only (macOS Keychain via `security`). `claude -p` receives file paths and content, never credentials. |
 | **Local scan is whitelist-only** | Scan roots read exclusively from `local-whitelist.yaml`. No code path accepts a root argument. |
-| **No personal data in this repo** | Profile comes from `MC_PROFILE` (default `mark`); all personal values live in config. `specs/` is a **known, accepted exception** — it predates the split and contains real domains. |
+| **No personal data in this repo** | Profile comes from `MCLAW_PROFILE` (default `mark`); all personal values live in config. `specs/` is a **known, accepted exception** — it predates the split and contains real domains. |
 | **No agent frameworks** | Evaluated and declined (design §preamble, tools §12). A dependency deny-list test guards `pyproject.toml`. |
 
 **Fail closed on the hard guarantees; fail open on everything else.** An exclusion violation blocks the artifact. A dead source never blocks a briefing.
@@ -30,7 +30,7 @@ These are **structural**, not advisory: each is enforced by a fact of the tool s
 
 Three tiers, per design §1:
 
-- **Tier 0 — launchd** LaunchAgents provide schedules. Plists are generated from `config/schedules.yaml` by `mc install-schedules`.
+- **Tier 0 — launchd** LaunchAgents provide schedules. Plists are generated from `config/schedules.yaml` by `mclaw install-schedules`.
 - **Tier 1 — Python wrappers** hold credentials, talk to providers, and write JSONL to a spool.
 - **Tier 2 — agentic layer** (`claude -p`) reads spool files and never sees secrets. Prompts live in `prompts/`.
 
@@ -69,7 +69,7 @@ Tooling upgrades must never require touching config or state. Wiping state must 
 | `specs/plans/` | Per-phase implementation plans with Linear issue links | Executing a phase; `PHASE-1-PLAN.md` is current |
 | `.claude/` | Agents, skills, conventions, settings | Understanding delegation and review conventions |
 
-The runtime tree (`bin/`, `mc_core/`, `prompts/`, `plists/`, `tests/`) is specified in design §6.3 and created by DEV-12.
+The runtime tree (`bin/`, `mclaw_core/`, `prompts/`, `plists/`, `tests/`) is specified in design §6.3 and created by DEV-12.
 
 ## Build
 
@@ -81,7 +81,7 @@ uv sync
 
 ```bash
 uv run pytest
-uv run mc test --canary   # exclusion canary suite; CI-blocking
+uv run mclaw test --canary   # exclusion canary suite; CI-blocking
 ```
 
 ## Development
@@ -89,14 +89,14 @@ uv run mc test --canary   # exclusion canary suite; CI-blocking
 Local Definition of Done — all green before opening a PR:
 
 ```bash
-uv lock --check && uv run ruff check . && uv run mypy && uv run pytest && uv run mc test --canary
+uv lock --check && uv run ruff check . && uv run mypy && uv run pytest && uv run mclaw test --canary
 ```
 
 Plus `/stack-check origin/main...HEAD` clean and the issue's acceptance criteria demonstrably met.
 
-The canary suite blocks any commit touching `mc_core/`, `bin/`, or a vault writer. It is the test that proves the exclusion guarantee bites — never weaken it to make a build pass.
+The canary suite blocks any commit touching `mclaw_core/`, `bin/`, or a vault writer. It is the test that proves the exclusion guarantee bites — never weaken it to make a build pass.
 
-**None of this toolchain exists yet.** `pyproject.toml`, the `mc` CLI, and the canary suite arrive with DEV-12 (skeleton) and DEV-16 (canary). Until then these commands fail, and that is expected.
+**None of this toolchain exists yet.** `pyproject.toml`, the `mclaw` CLI, and the canary suite arrive with DEV-12 (skeleton) and DEV-16 (canary). Until then these commands fail, and that is expected.
 
 ## Workflow
 

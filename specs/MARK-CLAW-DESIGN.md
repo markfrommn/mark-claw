@@ -25,19 +25,19 @@
 
 ```
 ┌─ Tier 0: launchd LaunchAgents (schedules) ─────────────────────────────┐
-│  mc-sweep-15m   :00/:15/:30/:45          mc-daily    07:50 (briefing)  │
-│  mc-sweep-hourly :05 past each hour       mc-weekly   Sat 09:00 (cfg)  │
-│  mc-dashboard   KeepAlive (loopback server)                            │
+│  mclaw-sweep-15m   :00/:15/:30/:45          mclaw-daily    07:50 (briefing)  │
+│  mclaw-sweep-hourly :05 past each hour       mclaw-weekly   Sat 09:00 (cfg)  │
+│  mclaw-dashboard   KeepAlive (loopback server)                            │
 └────────────────────────────────────────────────────────────────────────┘
 ┌─ Tier 1: mechanical layer (Python, uv-managed, in repo bin/) ──────────┐
-│  Orchestrators: mc-sweep-15m, mc-sweep-hourly, mc-daily, mc-weekly     │
-│  Provider wrappers (secrets live ONLY here, via `security`/`mc secret`):│
-│    mc-fetch-gmail  mc-fetch-graph   mc-fetch-slack   mc-fetch-mm       │
-│    mc-fetch-tg     mc-fetch-signal  mc-fetch-github  mc-fetch-figma    │
-│    mc-fetch-drive  mc-fetch-onedrive mc-fetch-local  mc-fetch-meet     │
-│    mc-fetch-zoom   mc-cal (both calendars)                             │
-│  Action wrappers:  mc-mail-act (label/move/archive/trash-aged/draft)   │
-│                    mc-send-self (briefing email; see §7.3)             │
+│  Orchestrators: mclaw-sweep-15m, mclaw-sweep-hourly, mclaw-daily, mclaw-weekly     │
+│  Provider wrappers (secrets live ONLY here, via `security`/`mclaw secret`):│
+│    mclaw-fetch-gmail  mclaw-fetch-graph   mclaw-fetch-slack   mclaw-fetch-mm       │
+│    mclaw-fetch-tg     mclaw-fetch-signal  mclaw-fetch-github  mclaw-fetch-figma    │
+│    mclaw-fetch-drive  mclaw-fetch-onedrive mclaw-fetch-local  mclaw-fetch-meet     │
+│    mclaw-fetch-zoom   mclaw-cal (both calendars)                             │
+│  Action wrappers:  mclaw-mail-act (label/move/archive/trash-aged/draft)   │
+│                    mclaw-send-self (briefing email; see §7.3)             │
 │  Shared modules:   exclusion gate (§5.2), output guard (§5.4),         │
 │                    notify (§8), rules engine (§4.2), state I/O         │
 │  Urgent classifier: Haiku via Messages API (structured output)         │
@@ -70,28 +70,28 @@ Every scheduled entry point is an **orchestrator script** invoked by launchd. An
 
 | Job | Trigger | Work |
 |---|---|---|
-| `mc-sweep-15m` | `StartCalendarInterval` :00/:15/:30/:45 | Batched sweep: 4 chat pollers + email urgent scan → urgent classify → alerts; chat capture to spool (urgent-check and full capture in one pass — spec §4.2 volume allows it, so **no separate hourly chat job**) |
-| `mc-sweep-hourly` | :05 each hour | Full email triage across 4 accounts; relabel detection; draft creation; vault filing of triage output |
-| `mc-daily` | 07:50 weekdays / 08:30 weekends | Morning briefing (weekend = urgent-only edition); calendar + GitHub + trackers assembly; meeting-prep briefs (Phase 4); junk-aging job; Drive/OneDrive change sweep; Figma poll; maintenance checks (signal-cli version, Figma PAT age, quarantine reminder) — **junk aging, Figma, and Drive ride this heartbeat; no extra scheduler entries** |
-| `mc-weekly` | Sat 09:00 (config) | Weekly review note; outreach digest; junk-rescue digest; approval batch; continuous exclusion spot-scan (§5.5) |
-| `mc-eod` | **on demand** (user runs it) | EOD auto-draft + voice gap interview (§7.4) |
-| `mc-capture` | **on demand only** | Local audio capture + STT. **No launchd entry may reference this command** — structural enforcement of "no autonomous recording" (§11.1) |
-| `mc-dashboard` | KeepAlive | Loopback status server (§9) |
+| `mclaw-sweep-15m` | `StartCalendarInterval` :00/:15/:30/:45 | Batched sweep: 4 chat pollers + email urgent scan → urgent classify → alerts; chat capture to spool (urgent-check and full capture in one pass — spec §4.2 volume allows it, so **no separate hourly chat job**) |
+| `mclaw-sweep-hourly` | :05 each hour | Full email triage across 4 accounts; relabel detection; draft creation; vault filing of triage output |
+| `mclaw-daily` | 07:50 weekdays / 08:30 weekends | Morning briefing (weekend = urgent-only edition); calendar + GitHub + trackers assembly; meeting-prep briefs (Phase 4); junk-aging job; Drive/OneDrive change sweep; Figma poll; maintenance checks (signal-cli version, Figma PAT age, quarantine reminder) — **junk aging, Figma, and Drive ride this heartbeat; no extra scheduler entries** |
+| `mclaw-weekly` | Sat 09:00 (config) | Weekly review note; outreach digest; junk-rescue digest; approval batch; continuous exclusion spot-scan (§5.5) |
+| `mclaw-eod` | **on demand** (user runs it) | EOD auto-draft + voice gap interview (§7.4) |
+| `mclaw-capture` | **on demand only** | Local audio capture + STT. **No launchd entry may reference this command** — structural enforcement of "no autonomous recording" (§11.1) |
+| `mclaw-dashboard` | KeepAlive | Loopback status server (§9) |
 
-All timed jobs use `StartCalendarInterval` (coalesced catch-up on wake — tools §7.1). Plists are **generated** from `config/schedules.yaml` by `mc install-schedules` (idempotent; sets PATH, WorkingDirectory, StandardOut/ErrPath into `state/logs/launchd/`).
+All timed jobs use `StartCalendarInterval` (coalesced catch-up on wake — tools §7.1). Plists are **generated** from `config/schedules.yaml` by `mclaw install-schedules` (idempotent; sets PATH, WorkingDirectory, StandardOut/ErrPath into `state/logs/launchd/`).
 
-**Sleep gap (decision 2026-07-05): `pmset` scheduled wake.** `mc install-schedules` also installs a repeating `pmset repeat wakeorpoweron MTWRF 07:45:00` so the 07:50 briefing runs and writes the vault locally. The 15-min alert cadence **accepts** lid-closed gaps — the phone's native mail/chat apps cover true emergencies while the Mac sleeps. No cloud Routine backstop (declined; revisit trigger stands in tools §11).
+**Sleep gap (decision 2026-07-05): `pmset` scheduled wake.** `mclaw install-schedules` also installs a repeating `pmset repeat wakeorpoweron MTWRF 07:45:00` so the 07:50 briefing runs and writes the vault locally. The 15-min alert cadence **accepts** lid-closed gaps — the phone's native mail/chat apps cover true emergencies while the Mac sleeps. No cloud Routine backstop (declined; revisit trigger stands in tools §11).
 
 ### 1.4 The 15-minute heartbeat (batching — borrowed pattern a)
 
 One launchd job, one orchestrator, one shared context — not N isolated polls:
 
 ```
-mc-sweep-15m
+mclaw-sweep-15m
  ├─ parallel subprocess fan-out (each wrapper: resolve secret → fetch since
  │  cursor → EXCLUSION GATE → normalize → append spool → advance cursor):
- │    mc-fetch-slack   mc-fetch-mm   mc-fetch-tg   mc-fetch-signal
- │    mc-fetch-gmail --urgent-scan ×3   mc-fetch-graph --urgent-scan
+ │    mclaw-fetch-slack   mclaw-fetch-mm   mclaw-fetch-tg   mclaw-fetch-signal
+ │    mclaw-fetch-gmail --urgent-scan ×3   mclaw-fetch-graph --urgent-scan
  ├─ collect: everything new this sweep (all sources, one list)
  ├─ single batched Haiku call: urgent-classify the batch (structured output:
  │    [{item_id, urgent: bool, kind, one_line, confidence}])
@@ -119,7 +119,7 @@ The trust boundary is the Tier-1 mechanical layer. Everything that touches crede
 
 ### 2.2 Credential isolation (borrowed pattern b — Vellum CES shape)
 
-- Config stores **only** `keychain://` references (tools §7.3). Wrappers resolve them at spawn via `security find-generic-password` (through the `mc secret get` helper once B1 lands); tokens exist as env vars inside the wrapper process only.
+- Config stores **only** `keychain://` references (tools §7.3). Wrappers resolve them at spawn via `security find-generic-password` (through the `mclaw secret get` helper once B1 lands); tokens exist as env vars inside the wrapper process only.
 - On-disk token material that must exist (OAuth token caches, Telethon StringSession, signal-cli data dir) lives in `state/secrets/` (0700 dir, 0600 files), read exclusively by wrappers.
 - **Nothing in Tier 2 ever sees a token**: `claude -p` prompts and `--allowedTools` contain data file paths and wrapper command names only. Wrappers never echo secrets; log formatter has a redaction pass keyed on resolved secret values as a belt-and-suspenders (secrets are compared by value against every log line before write).
 - The dashboard renders `state/` but is denied `state/secrets/` structurally: its file allowlist enumerates the directories it may read (§9.2).
@@ -148,10 +148,10 @@ The trust boundary is the Tier-1 mechanical layer. Everything that touches crede
  Meet/Zoom transcripts                                                          │
                                                                                 ▼
    15-min: spool(new) ─▶ urgent rules + Haiku ─▶ notify(Telegram) ─▶ alerts log
-   hourly: spool(mail) ─▶ rules engine ─▶ claude -p gray-zone ─▶ mc-mail-act
+   hourly: spool(mail) ─▶ rules engine ─▶ claude -p gray-zone ─▶ mclaw-mail-act
              (label/archive/draft) + triage records + vault filing
    daily:  spool + cursors + trackers + calendars ─▶ briefing assembler
-             ─▶ OUTPUT GUARD ─▶ wiki/briefings/ + mc-send-self (email)
+             ─▶ OUTPUT GUARD ─▶ wiki/briefings/ + mclaw-send-self (email)
    on-demand: day's data ─▶ EOD draft ─▶ interactive gap interview
              ─▶ OUTPUT GUARD ─▶ wiki/days/ + trackers
    weekly: triage stats + queues ─▶ review note ─▶ approvals ─▶ rule updates
@@ -226,7 +226,7 @@ new message ─▶ per-account override rules ─▶ learned rules ─▶ common
            prior thread? references real context?) → claude -p triage-judge
            (batched: all unmatched messages in one call, with feature digest)
            → bucket + confidence + rationale
- ─▶ mc-mail-act applies: label (mc/<bucket>), archive if bucket ≠ high,
+ ─▶ mclaw-mail-act applies: label (mclaw/<bucket>), archive if bucket ≠ high,
     draft-create if high & needs-reply (§ spec 3.7)
  ─▶ triage record appended (state/triage/<account>/YYYY-MM.jsonl)
  ─▶ changelog entry
@@ -234,7 +234,7 @@ new message ─▶ per-account override rules ─▶ learned rules ─▶ common
 
 **Rules vs LLM split:** rules decide everything they *can* decide (senders, list-ids, domains, header patterns — the stable bulk of mail volume); the LLM decides only what rules can't: the human-judgment buckets (is this a real person with real context? did this SDR do their homework?). Cold-call detection is a **feature lookup, not an LLM guess**: the wrapper resolves sender against `wiki/people/` frontmatter + the Phase-1 email-history contact index (`state/contacts/index.json`) and hands the judge a boolean `known_contact` + interaction summary.
 
-Bucket → provider mapping (tools §2 label adapter): Gmail labels `mc/high|middle|bulk|outreach|junk`; Outlook categories `MC High|…` + move to Archive well-known folder; star ↔ flag. Rules are written provider-neutral; the adapter lives in `mc-mail-act`.
+Bucket → provider mapping (tools §2 label adapter): Gmail labels `mclaw/high|middle|bulk|outreach|junk`; Outlook categories `MC High|…` + move to Archive well-known folder; star ↔ flag. Rules are written provider-neutral; the adapter lives in `mclaw-mail-act`.
 
 ### 4.2 Rules format
 
@@ -263,14 +263,14 @@ rules:
     match: {from: "*@growthblastr.io"}
     bucket: junk
     learned: {from_event: "relabel:gmail:powderhorns:197f…", at: "2026-07-12T09:05Z",
-              evidence: "user moved message from mc/junk to inbox? no — junked by user"}
+              evidence: "user moved message from mclaw/junk to inbox? no — junked by user"}
 ```
 
 ### 4.3 Relabel detection → learning
 
-Each hourly sweep, for messages triaged in the last 14 days (window in config), `mc-fetch-gmail`/`mc-fetch-graph` re-read current labels/folder and diff against the triage record:
+Each hourly sweep, for messages triaged in the last 14 days (window in config), `mclaw-fetch-gmail`/`mclaw-fetch-graph` re-read current labels/folder and diff against the triage record:
 
-- **User moved/relabeled** (record says `mc/junk`, message now in inbox or under another label) → correction event: fix the triage record, update the message's `mc/` label to match user intent, append a **learning example** (`state/examples/relabels.jsonl`: `{msg, account, was, now, features, at}`).
+- **User moved/relabeled** (record says `mclaw/junk`, message now in inbox or under another label) → correction event: fix the triage record, update the message's `mclaw/` label to match user intent, append a **learning example** (`state/examples/relabels.jsonl`: `{msg, account, was, now, features, at}`).
 - **Learning routing** (spec §9 buckets): sender-level consequences (this exact sender/domain → new bucket) are **auto-apply** — written to `rules/learned.yaml` + changelog. Pattern-level consequences ("many rescues share shape X → propose rule") are **needs-sign-off** — queued for the weekly review. Ambiguity → **more-context** question in the same review note.
 - Junk rescues are additionally tallied for the weekly junk-rescue digest (spec §8.4) — the misclassification-visibility metric (§ spec 13.2).
 
@@ -288,7 +288,7 @@ Each hourly sweep, for messages triaged in the last 14 days (window in config), 
  "target":"gmail:powderhorns:1963aa02","detail":{"junk_labeled":"2026-07-05","age_days":31}}
 ```
 
-`action` values are a closed enum (`mail.label|mail.move|mail.archive|mail.draft|mail.trash-aged|rule.add|rule.edit|exclusion.propose|note.write|alert.sent|guard.trip|…`). The weekly review and dashboard both render from this file; `mc log` greps it.
+`action` values are a closed enum (`mail.label|mail.move|mail.archive|mail.draft|mail.trash-aged|rule.add|rule.edit|exclusion.propose|note.write|alert.sent|guard.trip|…`). The weekly review and dashboard both render from this file; `mclaw log` greps it.
 
 ### 4.5 One-time cleanup (Phase 2 bootstrap)
 
@@ -307,7 +307,7 @@ Two independent layers; both must fail for a leak to occur, and the second faili
 
 ### 5.2 Fetch gate — single choke point
 
-One module in the tooling layer (`mc_core/exclusion.py`), imported by **every** wrapper; no wrapper implements its own filtering. API shape (normative):
+One module in the tooling layer (`mclaw_core/exclusion.py`), imported by **every** wrapper; no wrapper implements its own filtering. API shape (normative):
 
 ```
 gate = ExclusionGate.load(config)        # compiles exclusions.yaml + local-whitelist.yaml
@@ -316,7 +316,7 @@ gate.check(source_id, item_ref) -> ALLOW | EPHEMERAL | BLOCKED
 
 - Wrappers call `gate.check` at **enumeration time** — on conversation/folder/meeting IDs *before* requesting content. `BLOCKED` → the item is skipped entirely: no content API call, no log line naming it (the run record counts `blocked_skipped: n` without identifiers), nothing downstream. Where the provider API allows server-side filtering (Drive query, Slack conversation list), blocked IDs are additionally excluded from the request itself.
 - **Structural placement:** the gate call sits inside the shared `fetch_items()` base that all wrappers extend — a wrapper that "forgets" the gate would have to bypass the shared fetch path, which code review + the canary test (§5.5) catches.
-- **Local drive is whitelist-inverted:** `mc-fetch-local` takes its scan roots *only* from `local-whitelist.yaml`; there is no code path that scans an unlisted root (allowlist-over-prompt: the capability doesn't exist).
+- **Local drive is whitelist-inverted:** `mclaw-fetch-local` takes its scan roots *only* from `local-whitelist.yaml`; there is no code path that scans an unlisted root (allowlist-over-prompt: the capability doesn't exist).
 - Drive/OneDrive folder exclusions are path-prefix matches (inherit to subfolders); meetings match by event/series ID with title-pattern fallback; chat matches by conversation/contact ID.
 
 ### 5.3 Tier semantics
@@ -330,7 +330,7 @@ Default for anything not listed: fully processed (spec §7.1).
 
 ### 5.4 Output guard — fail closed (decision 2026-07-05)
 
-`mc_core/output_guard.py` compiles a deny-pattern set from `exclusions.yaml` — every blocked/ephemeral entry's IDs, names, aliases, and per-entry `also_match:` strings (word-boundary, case-insensitive; ephemeral entries contribute their identifiers for *persistence* surfaces only, since alerts legitimately name them as pointers). Every writer calls it on the full artifact before emitting:
+`mclaw_core/output_guard.py` compiles a deny-pattern set from `exclusions.yaml` — every blocked/ephemeral entry's IDs, names, aliases, and per-entry `also_match:` strings (word-boundary, case-insensitive; ephemeral entries contribute their identifiers for *persistence* surfaces only, since alerts legitimately name them as pointers). Every writer calls it on the full artifact before emitting:
 
 - **Scanned surfaces:** briefing markdown + email body, every vault note write, EOD output, weekly review, alert texts (against blocked entries), log lines (via the logging formatter), draft bodies.
 - **On hit — fail closed:** the artifact is **not** written/sent. It is moved to `state/quarantine/` (0700, outside the vault and outside any sync), a `guard.trip` changelog record is written, a system-severity Telegram alert fires ("exclusion guard tripped on morning-briefing — artifact quarantined"), and a needs-sign-off review item is queued with the match context. A tripped briefing is *lost until reviewed* — accepted cost; false-positive patterns get refined via the review loop (`also_match`/alias tuning is config, user-owned).
@@ -447,16 +447,16 @@ These two files (plus `alerts/`, `review-queue/`, `changelog/`, cursor mtimes) a
 ### 6.3 Tooling layer (repo)
 
 ```
-bin/            # orchestrators, wrappers, action tools, mc CLI (mc status, mc eod, mc log, …)
-mc_core/        # shared modules: exclusion gate, output guard, notify, rules engine,
+bin/            # orchestrators, wrappers, action tools, mclaw CLI (mclaw status, mclaw eod, mclaw log, …)
+mclaw_core/     # shared modules: exclusion gate, output guard, notify, rules engine,
                 #   spool/state I/O, provider adapters, secrets resolution
 prompts/        # per-pipeline claude -p prompts (briefing.md, triage-judge.md, eod.md, …)
-plists/         # generated-plist templates for mc install-schedules
+plists/         # generated-plist templates for mclaw install-schedules
 tests/          # unit + canary suite (§5.5)
 specs/          # this document and its inputs
 ```
 
-No personal data, no secrets, nothing Mark-specific hard-coded — profile comes from `MC_PROFILE` env (default `mark`), all personal values from config (spec §10).
+No personal data, no secrets, nothing Mark-specific hard-coded — profile comes from `MCLAW_PROFILE` env (default `mark`), all personal values from config (spec §10).
 
 ### 6.4 Credentials handling summary
 
@@ -464,7 +464,7 @@ No personal data, no secrets, nothing Mark-specific hard-coded — profile comes
 |---|---|---|
 | OAuth client IDs/secrets, Slack xoxp, MM PAT, TG api_id/hash + bot token, Zoom S2S, Figma PAT, Anthropic API key | macOS Keychain (login keychain, `mark-claw-mark` service), referenced as `keychain://` in config | Resolved inside wrappers only (§2.2) |
 | Google/MSAL token caches, Telethon StringSession, signal-cli data dir | `state/secrets/` 0700/0600 | Rebuildable by re-auth/relink |
-| `mc-send-self` credential | Distinct keychain account `gmail-send-only` on the same `mark-claw-mark` service; token cache scoped to `gmail.send` **only** | See §7.3 — the send credential can't read, the read credentials can't send |
+| `mclaw-send-self` credential | Distinct keychain account `gmail-send-only` on the same `mark-claw-mark` service; token cache scoped to `gmail.send` **only** | See §7.3 — the send credential can't read, the read credentials can't send |
 | Full credential set (backup) | `state/secrets/backup.age` (age-encrypted, refreshed on provision/rotation) | Passphrase held by Mark, never on disk — see tools §7.3 |
 
 ---
@@ -473,17 +473,17 @@ No personal data, no secrets, nothing Mark-specific hard-coded — profile comes
 
 ### 7.1 Morning briefing (weekdays 08:00; weekend urgent-only edition)
 
-`mc-daily` at 07:50 (pmset has woken the Mac at 07:45):
+`mclaw-daily` at 07:50 (pmset has woken the Mac at 07:45):
 
-1. **Gather** (Tier 1, parallel): calendars via `mc-cal` (Google work + O365 personal; `calendarView` pre-expands recurrences), GitHub (`assigned issues`, `review-requested PRs`), spool since the last EOD/briefing consumer cursor, triage records since same, alert history overnight, trackers (`tasks.md`, `waiting-on.md`), pending drafts list, today's meeting-prep notes (Phase 4).
+1. **Gather** (Tier 1, parallel): calendars via `mclaw-cal` (Google work + O365 personal; `calendarView` pre-expands recurrences), GitHub (`assigned issues`, `review-requested PRs`), spool since the last EOD/briefing consumer cursor, triage records since same, alert history overnight, trackers (`tasks.md`, `waiting-on.md`), pending drafts list, today's meeting-prep notes (Phase 4).
 2. **Assemble** (Tier 2, one `claude -p` run with `prompts/briefing.md`): produces the § spec-6.1 sections — day plan (+ suggested day organization), overnight comms highlights grouped by bucket (+ unanswered chat DMs/mentions, bulk-useful "worth reading?" bullets), alerts recap with status, waiting-on nudges with staleness, meeting-prep pointers. Degraded sources render explicit gap lines (§1.5).
-3. **Emit:** output guard → `wiki/briefings/YYYY-MM-DD-morning.md` → `mc-send-self` email. Weekend run (08:30) uses the same pipeline with `--edition weekend`: urgent-and-before-Monday items only.
+3. **Emit:** output guard → `wiki/briefings/YYYY-MM-DD-morning.md` → `mclaw-send-self` email. Weekend run (08:30) uses the same pipeline with `--edition weekend`: urgent-and-before-Monday items only.
 
 ### 7.2 Content contract
 
 The briefing prompt receives *structured gathered data* (JSON files), not raw provider access — it cannot fetch, only compose. Links: Gmail/Outlook permalinks for messages, `obsidian://` URIs for vault notes, GitHub URLs for issues/PRs, draft deep-links for pending replies.
 
-### 7.3 Delivery — `mc-send-self` (decision 2026-07-05)
+### 7.3 Delivery — `mclaw-send-self` (decision 2026-07-05)
 
 A dedicated send-only wrapper, the **only** send-capable code in the system:
 
@@ -493,10 +493,10 @@ A dedicated send-only wrapper, the **only** send-capable code in the system:
 
 ### 7.4 EOD capture (on demand — hybrid auto-draft + voice gap interview)
 
-`mc eod` (user runs it when wrapping up):
+`mclaw eod` (user runs it when wrapping up):
 
-1. **Auto-draft** (Tier 1 gather + one `claude -p`): day slice of spool (email/chat activity), calendar events attended, transcripts filed today, `mc-fetch-local` git scan (`--since=midnight` across whitelisted repos), GitHub commits/PRs, Figma versions (best-effort — undercount noted, tools §5.4), Drive/OneDrive changes. Draft = narrative day record + **explicit gap list** ("2:00–3:30 has no visible activity; the Acme thread got a reply drafted but not sent — decision?").
-2. **Gap interview** (interactive): `mc eod` drops into an interactive `claude` session primed with `prompts/eod.md` + the draft. The session presents the draft, then interviews on **gaps only** — action items, decisions, loose ends invisible in the data. Mark answers by voice via **VoiceInk** (global hotkey, pastes into the prompt; >5-min dumps: record-then-transcribe per tools §4.5). The session has vault-write and tracker-edit in `--allowedTools`, nothing provider-side.
+1. **Auto-draft** (Tier 1 gather + one `claude -p`): day slice of spool (email/chat activity), calendar events attended, transcripts filed today, `mclaw-fetch-local` git scan (`--since=midnight` across whitelisted repos), GitHub commits/PRs, Figma versions (best-effort — undercount noted, tools §5.4), Drive/OneDrive changes. Draft = narrative day record + **explicit gap list** ("2:00–3:30 has no visible activity; the Acme thread got a reply drafted but not sent — decision?").
+2. **Gap interview** (interactive): `mclaw eod` drops into an interactive `claude` session primed with `prompts/eod.md` + the draft. The session presents the draft, then interviews on **gaps only** — action items, decisions, loose ends invisible in the data. Mark answers by voice via **VoiceInk** (global hotkey, pastes into the prompt; >5-min dumps: record-then-transcribe per tools §4.5). The session has vault-write and tracker-edit in `--allowedTools`, nothing provider-side.
 3. **File:** output guard → `wiki/days/YYYY-MM-DD.md` (frontmatter: sources used, gaps unresolved); extracted action items appended to `trackers/tasks.md` / `trackers/waiting-on.md` (row-id convention §3.3); **comms recap** section (interesting email+chat since the morning briefing) included in the note. Skipping the interview (Ctrl-C / `--draft-only`) files the draft marked `interview: skipped`.
 
 ---
@@ -505,7 +505,7 @@ A dedicated send-only wrapper, the **only** send-capable code in the system:
 
 ### 8.1 Abstraction
 
-`mc_core/notify.py`: one interface, per-channel adapters, config-driven routing. **One-way by design** — the interface has exactly one operation:
+`mclaw_core/notify.py`: one interface, per-channel adapters, config-driven routing. **One-way by design** — the interface has exactly one operation:
 
 ```
 Channel.send(alert: Alert) -> DeliveryResult
@@ -544,7 +544,7 @@ Ships with the **Telegram bot adapter only** (`sendMessage`, Retry-After-aware b
 
 ### 9.1 Shape
 
-A single Python-stdlib HTTP server (`mc-dashboard`), bound to `127.0.0.1:<port from settings.yaml>`, launchd KeepAlive. **Renders state files on each request** — always current, no regeneration cadence, no cache. ~200–300 lines, zero frameworks, zero JS build; one HTML page (+ `?json=1` for raw data). No STATUS.md vault mirror (declined this round; trivial to add later as another renderer over the same files).
+A single Python-stdlib HTTP server (`mclaw-dashboard`), bound to `127.0.0.1:<port from settings.yaml>`, launchd KeepAlive. **Renders state files on each request** — always current, no regeneration cadence, no cache. ~200–300 lines, zero frameworks, zero JS build; one HTML page (+ `?json=1` for raw data). No STATUS.md vault mirror (declined this round; trivial to add later as another renderer over the same files).
 
 ### 9.2 Read-only by construction
 
@@ -573,7 +573,7 @@ A single Python-stdlib HTTP server (`mc-dashboard`), bound to `127.0.0.1:<port f
 | Bucket | Trigger examples | Mechanics |
 |---|---|---|
 | **Auto-apply** | Sender-level rule from a relabel (§4.3); label correction; wiki backlink fix; spool/state prune | Applied immediately by the detecting pipeline; `changelog` record with `approval: auto-apply`; visible in weekly review's "what I changed" section |
-| **Needs sign-off** | New classification rule/pattern or category; purge-policy change; new/edited pipeline or prompt; **proposed exclusions** (assistant may propose, never apply — spec §7.3); anything quality-degrading | Appended to `review-queue/pending.jsonl`; rendered into the weekly review note; applied only by `mc apply-approvals` after human markup |
+| **Needs sign-off** | New classification rule/pattern or category; purge-policy change; new/edited pipeline or prompt; **proposed exclusions** (assistant may propose, never apply — spec §7.3); anything quality-degrading | Appended to `review-queue/pending.jsonl`; rendered into the weekly review note; applied only by `mclaw apply-approvals` after human markup |
 | **More context** | Ambiguities (e.g., "is sender X a real contact or persistent SDR?") | Same queue, `kind: question`; answers free-text in the review note |
 
 Inputs: relabel events, in-session feedback (EOD/interactive sessions can append queue items), the weekly self-audit (classification-accuracy stats from `triage/` + `examples/`), and session-history analysis.
@@ -607,7 +607,7 @@ Is "Dana Kim <dana@…>" a real contact? Two borderline threads this month.
 
 ### 10.3 Apply
 
-`mc apply-approvals` (run by `mc-weekly`'s next cycle and available on demand): parses checkbox/answer markup, applies approved changes (rule → `rules/learned.yaml`; prompt/pipeline edits → staged as a repo diff for Mark to commit — the tooling layer stays human-committed; exclusion proposals → **rendered as a ready-to-paste `exclusions.yaml` snippet, never auto-applied**), writes `changelog` records (`approval: signed-off`, with review-note ref), removes items from the queue, and updates the note with an "applied/rejected" results section. "Don't ask again" registers a category grant in `settings.yaml → learning.auto_grant: [category-ids]`, moving that category to auto-apply going forward.
+`mclaw apply-approvals` (run by `mclaw-weekly`'s next cycle and available on demand): parses checkbox/answer markup, applies approved changes (rule → `rules/learned.yaml`; prompt/pipeline edits → staged as a repo diff for Mark to commit — the tooling layer stays human-committed; exclusion proposals → **rendered as a ready-to-paste `exclusions.yaml` snippet, never auto-applied**), writes `changelog` records (`approval: signed-off`, with review-note ref), removes items from the queue, and updates the note with an "applied/rejected" results section. "Don't ask again" registers a category grant in `settings.yaml → learning.auto_grant: [category-ids]`, moving that category to auto-apply going forward.
 
 ---
 
@@ -617,16 +617,16 @@ Is "Dana Kim <dana@…>" a real contact? Two borderline threads this month.
 
 | Constraint (spec §11) | Structural fact enforcing it | Where |
 |---|---|---|
-| Never hard-delete | Wrappers implement no `messages.delete` / Graph DELETE; only `mc-mail-act trash-aged`, which internally verifies `mc/junk` label + ≥30d age before calling `messages.trash` / move-to-Deleted-Items | `mc-mail-act` |
-| Nothing sent autonomously (email) | Read wrappers implement no send endpoint; drafts via `drafts.create` only; the sole send path is `mc-send-self`, whose token is `gmail.send`-scope-only and whose recipients must ⊆ `own_addresses` (no recipient parameter exists) | §7.3 |
+| Never hard-delete | Wrappers implement no `messages.delete` / Graph DELETE; only `mclaw-mail-act trash-aged`, which internally verifies `mclaw/junk` label + ≥30d age before calling `messages.trash` / move-to-Deleted-Items | `mclaw-mail-act` |
+| Nothing sent autonomously (email) | Read wrappers implement no send endpoint; drafts via `drafts.create` only; the sole send path is `mclaw-send-self`, whose token is `gmail.send`-scope-only and whose recipients must ⊆ `own_addresses` (no recipient parameter exists) | §7.3 |
 | Read-only on chat | Pollers implement no post/react/mark-read calls (verified per-platform in tools §3: no read path marks read); rejected MCP servers with send tools are not installed | chat wrappers |
-| No autonomous recording | `mc-capture` has no launchd entry and is referenced by no orchestrator; `mc install-schedules` refuses a schedule naming it | §1.3 |
+| No autonomous recording | `mclaw-capture` has no launchd entry and is referenced by no orchestrator; `mclaw install-schedules` refuses a schedule naming it | §1.3 |
 | Exclusion hard guarantee | Fetch gate at enumeration inside shared fetch path (§5.2) + fail-closed output guard on every writer (§5.4) + canary/continuous tests (§5.5) | §5 |
 | Notifications one-way | `Channel` interface has `send()` only; no inbound listener exists anywhere | §8.1 |
 | Secrets never in agent context | `keychain://` refs resolve inside wrappers; Tier-2 `--allowedTools` = data paths + wrapper commands; dashboard directory allowlist excludes `secrets/` | §2.2 |
 | Local scan = whitelist only | Scan roots read exclusively from `local-whitelist.yaml`; no discovery code path outside them | §5.2 |
 | No personal data in tooling | Profile via env; config/state under XDG per-profile dirs; canary suite includes a repo grep for personal identifiers | §6.3 |
-| Auditability | Closed-enum changelog written by every acting pipeline; `mc log` + dashboard render it | §4.4 |
+| Auditability | Closed-enum changelog written by every acting pipeline; `mclaw log` + dashboard render it | §4.4 |
 
 ### 11.2 Borrowed-pattern index (tools §12.3 → design)
 
@@ -639,9 +639,9 @@ Is "Dana Kim <dana@…>" a real contact? Two borderline threads this month.
 | Spec phase | Design slices delivered | Acceptance highlights |
 |---|---|---|
 | **Phase 1 — Foundations** | Config/state/tooling skeletons (§6) with `mark` profile; vault layout + `VAULT-GUIDE.md` (§3.3) + Obsidian Sync; **exclusion gate + output guard + canary suite (§5) built before any ingestion**; `op` secret wiring (§2.2, §6.4); bulk-ingest pipelines (email history mining → `contacts/index.json` + dossier seeds; Slack/MM full + TG/Signal 90-day chat scan — Signal forward-only from link, so **link signal-cli day 1**; life-story session; local sweep via whitelist; Drive/OneDrive key docs) | Canary test green; exclusions live before first fetch; state wipe → rebuild works |
-| **Phase 2 — Comms triage** | Rules engine + bucket taxonomy + provider label adapter (§4.1–4.2); one-time cleanup + reports (§4.5); `mc-sweep-15m` batched heartbeat (§1.4) + `mc-sweep-hourly`; notify layer + Telegram adapter (§8); junk-aging job; relabel detection + learning events (§4.3); changelog (§4.4); reply drafts; **initial dashboard** (§9) over the now-live state files | Negative-path exclusion drill (§5.5.4); no-send/no-delete tests; inbox trending to near-zero |
-| **Phase 3 — Daily rituals + calls** | `mc-daily` briefing pipeline + weekend edition (§7.1–7.2); `mc-send-self` (§7.3); pmset wake install (§1.3); EOD auto-draft + VoiceInk gap interview (§7.4); transcript pipelines: Meet (Doc-via-Drive durable path), Zoom S2S VTT, `mc-capture` local capture + whisper.cpp STT (opt-out policy for work calendar via exclusions) | Briefing lands 08:00 with lid closed overnight; EOD files day note + tracker updates |
-| **Phase 4 — Extras + learning maturity** | Waiting-on tracker automation, meeting-prep briefs, contact-dossier enrichment, weekly review (§ spec 8); full bucketed loop: review-queue + vault approval note + `mc apply-approvals` (§10); self-audit stats; dashboard cost/accuracy panels | ≤1–2 junk rescues/week; weekly approvals flowing; spec §13 checks pass |
+| **Phase 2 — Comms triage** | Rules engine + bucket taxonomy + provider label adapter (§4.1–4.2); one-time cleanup + reports (§4.5); `mclaw-sweep-15m` batched heartbeat (§1.4) + `mclaw-sweep-hourly`; notify layer + Telegram adapter (§8); junk-aging job; relabel detection + learning events (§4.3); changelog (§4.4); reply drafts; **initial dashboard** (§9) over the now-live state files | Negative-path exclusion drill (§5.5.4); no-send/no-delete tests; inbox trending to near-zero |
+| **Phase 3 — Daily rituals + calls** | `mclaw-daily` briefing pipeline + weekend edition (§7.1–7.2); `mclaw-send-self` (§7.3); pmset wake install (§1.3); EOD auto-draft + VoiceInk gap interview (§7.4); transcript pipelines: Meet (Doc-via-Drive durable path), Zoom S2S VTT, `mclaw-capture` local capture + whisper.cpp STT (opt-out policy for work calendar via exclusions) | Briefing lands 08:00 with lid closed overnight; EOD files day note + tracker updates |
+| **Phase 4 — Extras + learning maturity** | Waiting-on tracker automation, meeting-prep briefs, contact-dossier enrichment, weekly review (§ spec 8); full bucketed loop: review-queue + vault approval note + `mclaw apply-approvals` (§10); self-audit stats; dashboard cost/accuracy panels | ≤1–2 junk rescues/week; weekly approvals flowing; spec §13 checks pass |
 
 ---
 
@@ -663,6 +663,6 @@ Is "Dana Kim <dana@…>" a real contact? Two borderline threads this month.
 | Sleeping-Mac gap | **pmset scheduled wake** (~07:45 weekdays) for the briefing; accept 15-min alert gaps while lid closed (phone native apps cover emergencies); no cloud backstop |
 | Output guard on hit | **Fail closed** — block artifact, quarantine (0700, unsynced), Telegram system alert, needs-sign-off review item |
 | Dashboard form | **Loopback-only stdlib server**, render-on-request over state files; GET-only; directory allowlist; no STATUS.md mirror for now |
-| Briefing email sender | **`mark@powderhorns.biz`** via dedicated `mc-send-self` wrapper: `gmail.send`-only token, recipients hardcoded to own addresses from config |
+| Briefing email sender | **`mark@powderhorns.biz`** via dedicated `mclaw-send-self` wrapper: `gmail.send`-only token, recipients hardcoded to own addresses from config |
 | Mechanical-tier language | Python throughout Tier 1 (Telethon forces Python for Telegram; one language for the tier) |
 | Simplifications accepted with outline | Junk-aging/Figma/Drive ride the daily heartbeat; single 15-min chat pass does urgent + full capture; vault review note is the approval UI (no bespoke UI) |
