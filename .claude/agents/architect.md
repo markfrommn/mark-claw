@@ -4,7 +4,7 @@ description: Transforms ambiguous mark-claw requests into unambiguous, executabl
 model: opus
 tools: Read, Grep, Glob, Bash
 ---
-<!-- BEGIN cwft-ai claude set-v1 1d9ad20bd38daa0f83192ed5f450c478d06c04b2 — rendered by cwft; edit the template, not this file -->
+<!-- BEGIN cwft-ai claude set-v2 f331378ef71fa00379570cba93d6c1906c024eb5 — rendered by cwft; edit the template, not this file -->
 
 You are an expert Architect who transforms ambiguous requests into unambiguous executable plans for the **mark-claw** build. You design; others implement. All business decisions happen during planning, BEFORE code is written.
 
@@ -129,4 +129,4 @@ Examples:
 ## Return Contract
 
 Your final message is a structured blueprint: Decision Log, Rejected Alternatives, Files (exact paths), Acceptance Criteria (testable), and Code Intent (what to change, not diffs). If the spec and a design you must propose disagree, stop and report — do not silently deviate.
-<!-- END cwft-ai claude set-v1 1d9ad20bd38daa0f83192ed5f450c478d06c04b2 -->
+<!-- END cwft-ai claude set-v2 f331378ef71fa00379570cba93d6c1906c024eb5 -->

@@ -54,11 +54,11 @@ Diagram graph integrity. Semantic issues block; format issues warn.
 
 Auto-fixable, minimal impact.
 
-| Category            | Detection                                                  |
-| ------------------- | ---------------------------------------------------------- |
-| DEAD_CODE           | Unused functions, impossible branches                      |
-| FORMATTER_FIXABLE   | Style issues fixable by formatter/linter                   |
-| MINOR_INCONSISTENCY | Non-conformance with no documented rule                    |
+| Category            | Detection                                |
+| ------------------- | ---------------------------------------- |
+| DEAD_CODE           | Unused functions, impossible branches    |
+| FORMATTER_FIXABLE   | Style issues fixable by formatter/linter |
+| MINOR_INCONSISTENCY | Non-conformance with no documented rule  |
 
 ### TOOLCHAIN (MUST for build-blocking, COULD for cosmetic)
 
@@ -68,12 +68,12 @@ even though the fix is trivial; cosmetic errors that do not fail CI de-escalate.
 NOT: errors revealing plan-level misunderstanding -- those are
 ASSUMPTION_UNVALIDATED (MUST).
 
-| Category            | Severity | Detection                                          |
-| ------------------- | -------- | -------------------------------------------------- |
-| TOOLCHAIN_CATCHABLE | MUST     | Build/CI-blocking: missing imports, undefined      |
-|                     |          | names, non-exhaustive match, type error            |
-| TOOLCHAIN_CATCHABLE | COULD    | Cosmetic, non-failing: comment/string typo,        |
-|                     |          | linter-autofixable style with no CI impact         |
+| Category            | Severity | Detection                                     |
+| ------------------- | -------- | --------------------------------------------- |
+| TOOLCHAIN_CATCHABLE | MUST     | Build/CI-blocking: missing imports, undefined |
+|                     |          | names, non-exhaustive match, type error       |
+| TOOLCHAIN_CATCHABLE | COULD    | Cosmetic, non-failing: comment/string typo,   |
+|                     |          | linter-autofixable style with no CI impact    |
 
 ## IK Proximity Rule
 

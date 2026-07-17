@@ -1,4 +1,4 @@
-<!-- BEGIN cwft-ai specs set-v1 1d9ad20bd38daa0f83192ed5f450c478d06c04b2 — rendered by cwft; edit the template, not this file -->
+<!-- BEGIN cwft-ai specs set-v2 f331378ef71fa00379570cba93d6c1906c024eb5 — rendered by cwft; edit the template, not this file -->
 # Workflow — mark-claw
 
 This is the **operational playbook** for building this repo with Claude Code: the per-PR loop, the
@@ -163,29 +163,15 @@ Cursor window** (`cursor "<WT>/eng-NNN"`):
 
 - **Setup.** `uv sync` per worktree — fast via uv's shared cache, the analog of per-worktree
   `pnpm install`. `--no-setup` skips it.
-- **Multi-process dev loop.** Four things, not one dev server: pane 0 `claude`, pane 1
-  `uv run prefect server start`, an extra pane `uv run prefect worker start --pool <pool-name>`,
-  pane 2 `uv run ptw .` (pytest-watcher). This ordered set is the repo's
-  committed `workflow.panes`.
-- **Postgres is external.** The dev loop does not start Postgres — start it from a
-  checkout of the app-schema owner repo (it owns the Postgres + message-queue-extension +
-  app-schema container) and point the app-DB and Prefect metadata DB connection env vars at it.
-  `cwft`'s `workflow.services` preflight only checks reachability and warns; it does not start
-  Postgres.
-- **Fixed Prefect port.** The server binds `4200` — set `PREFECT_SERVER_API_PORT` per worktree for
-  parallel servers.
-- **Bring-up order** (native, idempotent): `uv sync` → `ops-cli init-db` →
-  `ops-cli migrate` → start server → `ops-cli sync` → start worker.
+
 - **No ORM codegen; migrations are hand-authored.** The hand-authored-migration schema is plain
   ordered SQL applied by the ops CLI migrate — a feature (DBA-auditable), not a generated
-  artifact. The two edit→apply loops: hand-authored SQL → ops-CLI migrate, and Prefect
-  deployments → ops-CLI sync.
+  artifact. The edit→apply loop is hand-authored SQL → ops-CLI migrate.
 - **Generated files (never hand-edit).** `uv.lock` (regen `uv lock`), `specs/contracts/*` (vendored,
   regen `scripts/sync-contracts.sh`), CycloneDX SBOM — not the migrations.
 - **Project skills.** `/stack-check`.
 - **Escalation harness.** `Plan` agent / plan mode.
-- **Changesets.** None — lockstep repo versioning; the jobs bundle pins the exact
-  platform/Prefect version.
+- **Changesets.** None — lockstep repo versioning.
 - **Boundaries.** Approved stack only; air-gapped-first (no CDN/PyPI at runtime; pinned `uv.lock`);
   job state lives in the jobs-state schema; the app schema is read only through the vendored
   `specs/contracts/` snapshot (C1).
@@ -237,8 +223,7 @@ generated files** — regenerate via the stack's loop.
 Build test-first where practical: **write the test from the acceptance criteria, watch it fail,
 implement until green**, using this stack's test stack:
 
-> pytest + prefect_test_harness + respx (httpx mocking). Run `uv run pytest` from
-the repo root.
+> pytest. Run `uv run pytest` from the repo root.
 
 
 Mock the data/tenancy or network boundaries for unit tests; reserve a live DB / real backend for e2e.
@@ -256,7 +241,7 @@ Run this stack's **local gates** (working directory per this repo's profile note
 varies by stack):
 
 ```bash
-uv lock --check && uv run ruff check . && uv run mypy && uv run pytest && uv build --all-packages
+uv lock --check && uv run ruff format --check && uv run ruff check . && uv run mypy && uv run pytest -m 'not integration' && uv build
 ```
 
 Plus: **`/stack-check origin/main...HEAD` clean**; **no codegen drift** if the schema/API surface was touched (the
@@ -292,7 +277,7 @@ gh pr create --base main --fill   # title references the issue; body links it
 [ ] TDD: test from acceptance → fail → implement → green
 [ ] Codegen/sync per this stack (never hand-edit generated files) — see profile notes
 [ ] Small commits at checkpoints (issue branch only)
-[ ] Gates (working directory per profile notes): uv lock --check && uv run ruff check . && uv run mypy && uv run pytest && uv build --all-packages
+[ ] Gates (working directory per profile notes): uv lock --check && uv run ruff format --check && uv run ruff check . && uv run mypy && uv run pytest -m 'not integration' && uv build
 [ ] /stack-check origin/main...HEAD clean; no codegen drift (if schema/API touched); changeset if this stack needs one
 [ ] Verify in the running app/server (uv build) for endpoint/UI changes
 [ ] Push; gh pr create; body: "Closes DEV-NNN" + "@coderabbitai ignore" (REQUIRED — re-fetch body & confirm the line is present, else CodeRabbit reviews early)
@@ -426,7 +411,7 @@ dumping the whole plan; be specific and course-correct early rather than letting
   this for you.
 - **TDD where practical** — test from acceptance criteria, fail, implement, pass.
 - **Small, frequent commits and PRs** — one sub-step per PR; it's the review unit and the close gate.
-- **Let Claude verify itself** — it has the gates (`uv lock --check && uv run ruff check . && uv run mypy && uv run pytest && uv build --all-packages`, `/stack-check`) and the
+- **Let Claude verify itself** — it has the gates (`uv lock --check && uv run ruff format --check && uv run ruff check . && uv run mypy && uv run pytest -m 'not integration' && uv build`, `/stack-check`) and the
   running app/server (uv build). Make it prove the DoD.
 - **Respect the boundaries every time** — air-gap (no CDNs/SaaS at runtime), this stack's core
   pattern and boundaries, and generated files (regenerate, never hand-edit). `/stack-check` is the
@@ -459,7 +444,7 @@ cd "<WT>/$ID"     # then run the stack setup (see §3.5 profile notes)
 cursor "<WT>/$ID"
 
 # local gates (the per-PR DoD) — working directory varies by stack, see §3.5 profile notes
-uv lock --check && uv run ruff check . && uv run mypy && uv run pytest && uv build --all-packages
+uv lock --check && uv run ruff format --check && uv run ruff check . && uv run mypy && uv run pytest -m 'not integration' && uv build
 # + /stack-check origin/main...HEAD   (+ the stack's codegen loop shows no drift if schema/API changed)
 
 # open the PR (CodeRabbit paused; see §7 for the full bot sequence)
@@ -477,4 +462,4 @@ git worktree remove "<WT>/$ID" && git branch -d "$BRANCH"
 # macOS niceties
 caffeinate -dimsu claude         # keep the Mac awake while a long agent run proceeds
 ```
-<!-- END cwft-ai specs set-v1 1d9ad20bd38daa0f83192ed5f450c478d06c04b2 -->
+<!-- END cwft-ai specs set-v2 f331378ef71fa00379570cba93d6c1906c024eb5 -->

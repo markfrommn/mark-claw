@@ -78,7 +78,7 @@ Illustrative patterns (not exhaustive -- similar violations exist):
 [low] Overload ambiguity
 
 - Calling an overloaded function where the resolved overload is not the intended one
-</violations>
+  </violations>
 
 <exceptions>
 Intentional coercions at adapter boundaries where the conversion is explicit and tested. Variadic functions (`...args`) designed to accept variable counts.
@@ -124,7 +124,7 @@ Illustrative patterns (not exhaustive -- similar violations exist):
 [low] Implicit falsy short-circuit
 
 - `value && value.prop` where `0` or `""` is a valid value but would be skipped
-</violations>
+  </violations>
 
 <exceptions>
 Non-null assertions backed by a preceding guard that TypeScript cannot narrow (document why). Array access inside a loop where the bound is the array's own `.length`.
@@ -172,7 +172,7 @@ Illustrative patterns (not exhaustive -- similar violations exist):
 
 - Using `parseInt` with no radix (implicit base-10 assumption, leading zeros can surprise)
 - Accepting extra unknown fields without stripping (over-posting / mass assignment risk)
-</violations>
+  </violations>
 
 <exceptions>
 Internal service-to-service calls within the same trust boundary where the caller is verified code. Data that has already been validated at a gateway and is passed via a verified, typed contract.
@@ -206,6 +206,7 @@ Illustrative patterns (not exhaustive -- similar violations exist):
 
 [critical] Command injection
 
+<!-- prettier-ignore -->
 - `exec(userInput)`, `execSync(\`cmd ${arg}\`)` where `arg` derives from external input
 - `child_process.spawn` with shell: true and unsanitized arguments
 - Any shell metacharacter (`; | & $ \` > <`) that could appear in user-controlled string passed to shell
@@ -224,7 +225,7 @@ Illustrative patterns (not exhaustive -- similar violations exist):
 
 - `eval(userInput)`, `new Function(userInput)`, `require(userInput)`, dynamic `import(userInput)`
 - Template rendering with user-controlled template string (server-side template injection)
-</violations>
+  </violations>
 
 <exceptions>
 ORM parameterized queries where user data is passed as a bound parameter, not interpolated into the query string. Shell commands with fully allowlisted, non-shellable arguments. Static file paths assembled from enum values or configuration, not user input.
@@ -277,7 +278,7 @@ Illustrative patterns (not exhaustive -- similar violations exist):
 
 - JWT without expiry (`expiresIn` not set)
 - Refresh tokens stored in localStorage instead of httpOnly cookies
-</violations>
+  </violations>
 
 <exceptions>
 Explicitly public endpoints (e.g., health check, public catalog). Authentication endpoints themselves (login, register) which by definition cannot require prior authentication.
@@ -331,7 +332,7 @@ Illustrative patterns (not exhaustive -- similar violations exist):
 
 - Complex regex with catastrophic backtracking applied to user-supplied strings of arbitrary length
 - Nested quantifiers (`(a+)+`, `(.*)*`) in patterns evaluated against user input
-</violations>
+  </violations>
 
 <exceptions>
 Allocations capped by an explicit, code-visible maximum constant. Pagination limits enforced at the DTO layer with `@Max()`. File uploads with `multer` or equivalent enforcing `limits.fileSize`.

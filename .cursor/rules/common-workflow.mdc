@@ -2,7 +2,7 @@
 description: mark-claw — workflow guardrails and hard rules for AI-assisted edits
 alwaysApply: true
 ---
-<!-- BEGIN cwft-ai cursor set-v1 1d9ad20bd38daa0f83192ed5f450c478d06c04b2 — rendered by cwft; edit the template, not this file -->
+<!-- BEGIN cwft-ai cursor set-v2 f331378ef71fa00379570cba93d6c1906c024eb5 — rendered by cwft; edit the template, not this file -->
 
 # mark-claw: rules for AI edits (Cursor)
 
@@ -26,4 +26,4 @@ The authoritative hard rules live in `CLAUDE.md` and `specs/WORKFLOW.md` — nev
 files, stay air-gapped (nothing required at runtime on a CDN/SaaS), use the approved stack only, and
 respect the stack's architectural boundaries. Read those before non-trivial changes, and audit any
 diff with **`/stack-check`** before opening a PR.
-<!-- END cwft-ai cursor set-v1 1d9ad20bd38daa0f83192ed5f450c478d06c04b2 -->
+<!-- END cwft-ai cursor set-v2 f331378ef71fa00379570cba93d6c1906c024eb5 -->

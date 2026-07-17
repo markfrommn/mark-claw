@@ -6,14 +6,19 @@ documentation (CLAUDE.md, README.md) must follow these principles.
 ## Core Principles
 
 **Self-contained documentation**: All code-adjacent documentation (CLAUDE.md,
-README.md) must be self-contained. Do NOT reference external authoritative
-sources (doc/ directories, wikis, external documentation). If knowledge exists
-in an authoritative source, it must be summarized locally. Duplication is
-acceptable; the maintenance burden is the cost of locality.
+README.md) must summarize the binding knowledge needed where it is read. Link
+to the higher authoritative source for the complete rule or rationale;
+duplication of a concise local summary is accepted as the cost of locality.
 
-**CLAUDE.md = pure index**: CLAUDE.md files are navigation aids only. They
-contain WHAT is in the directory and WHEN to read each file. All explanatory
-content (architecture, decisions, invariants) belongs in README.md.
+**Root CLAUDE.md = agent instructions + navigation**: The repository-root
+`CLAUDE.md` is the agent-instruction file. It may contain a one-line overview,
+the authority chain, locally summarized hard rules and commands, an index, and
+skills/agents pointers. Keep architecture, decisions, and longer rationale in
+README.md or the authoritative documentation it links.
+
+**Subdirectory CLAUDE.md = navigation aid**: A `CLAUDE.md` below the repository
+root remains a concise navigation aid: what is present and when to read it.
+Put detailed explanations in that directory's README.md.
 
 **README.md = invisible knowledge**: README.md files capture knowledge NOT
 visible from reading source code. If ANY invisible knowledge exists for a
@@ -81,6 +86,14 @@ See also: conventions/code-quality/05-documentation-and-tests.md "Generated and 
 
 [One sentence: what this is]
 
+## Authority
+
+[Authority chain, with local links to the governing specification and workflow]
+
+## Hard Rules
+
+[Locally summarized binding rules and process-execution constraints]
+
 ## Files
 
 | File | What | When to read |
@@ -120,15 +133,24 @@ See also: conventions/code-quality/05-documentation-and-tests.md "Generated and 
 | --------- | ---- | ------------ |
 ```
 
-**Critical constraint:** CLAUDE.md files are navigation aids, not explanatory
-documents. They contain:
+**Root CLAUDE.md contents:**
+
+- One-sentence overview (REQUIRED)
+- Authority chain (REQUIRED): link the governing specification and workflow
+- Hard rules and commands (as needed): summarize the binding rules locally and
+  link to their complete authority; both local self-containment and the chain
+  are required
+- File/directory index (REQUIRED): tabular format with What/When columns
+- Skills/agents pointers (OPTIONAL)
+
+**Subdirectory CLAUDE.md contents:**
 
 - File/directory index (REQUIRED): tabular format with What/When columns
 - One-sentence overview (OPTIONAL): what this directory is
 - Operational sections (OPTIONAL): Build, Test, Regenerate, Deploy, or similar
   commands specific to this directory's artifacts
 
-They do NOT contain:
+Subdirectory CLAUDE.md files do NOT contain:
 
 - Architectural explanations (-> README.md)
 - Design decisions or rationale (-> README.md)
@@ -270,7 +292,7 @@ Cross-cutting knowledge that cannot be localized belongs in README.md.
 
 Above statements or expressions where the choice is non-obvious.
 
-Document *why* this approach, never *what* the code does. The reader can see what
+Document _why_ this approach, never _what_ the code does. The reader can see what
 the code does: they cannot see why it was chosen over alternatives.
 
 Good:

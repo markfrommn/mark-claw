@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "set_version": 1,
-  "source_sha": "1d9ad20bd38daa0f83192ed5f450c478d06c04b2",
+  "set_version": 2,
+  "source_sha": "f331378ef71fa00379570cba93d6c1906c024eb5",
   "stack": "python-uv",
   "files": [
     {
@@ -10,7 +10,7 @@
       "generator": "claude",
       "rendered": true,
       "mode": "0640",
-      "sha256": "5b53f3bcdff27336891dcc28fc2ee5a146cb639244b0db03c1d6e6d6a1466fe7"
+      "sha256": "2b1670f1d532cfbcf08971242dfddc148c2709e0af97280c2f7ba4b7b36f155b"
     },
     {
       "path": ".claude/agents/common-developer.md",
@@ -18,7 +18,7 @@
       "generator": "claude",
       "rendered": true,
       "mode": "0640",
-      "sha256": "5b775a146a0fc74fdac28fcc74ca372236a20d1cda4577a6aba81fda4feff077"
+      "sha256": "725080db533db6b7e01c2ca6c507f918b518bcedd32e011435f78080a623b2b8"
     },
     {
       "path": ".claude/agents/common-quality-reviewer.md",
@@ -26,7 +26,7 @@
       "generator": "claude",
       "rendered": true,
       "mode": "0640",
-      "sha256": "9d0221b41bedc16e8b8fbc0eac6862053d37d74978b1f9404053d09f23235ecd"
+      "sha256": "627c35b19669f38c805441135b464ca5eba213a72bb9fa31f3e6b3d4126b012f"
     },
     {
       "path": ".claude/agents/debugger.md",
@@ -34,7 +34,7 @@
       "generator": "claude",
       "rendered": true,
       "mode": "0640",
-      "sha256": "1a55212d18665243057ef15a1d4e9cc131411d766252875782c8e415f811bd1d"
+      "sha256": "cd815df59f7e632c1a93d548f9df698124912653565049d794604513dab4c758"
     },
     {
       "path": ".claude/agents/technical-writer.md",
@@ -42,15 +42,7 @@
       "generator": "claude",
       "rendered": true,
       "mode": "0640",
-      "sha256": "671115dc3710e5f6c877d0c261ee53cf0cdce7dbb2b2982f7c5376ede7e8f5d7"
-    },
-    {
-      "path": ".claude/commands/stack-check.md",
-      "template": "ai/common/claude/.claude/commands/stack-check.md.template",
-      "generator": "claude",
-      "rendered": true,
-      "mode": "0640",
-      "sha256": "7af454150eb7dd5779642893034c2dc09e91e7258765451c800da314fabdbd55"
+      "sha256": "017ddef9b0e6f665a14556d40a82df47c3041e292de9134c78f4eb0cf43efc2d"
     },
     {
       "path": ".claude/conventions/CLAUDE.md",
@@ -58,7 +50,7 @@
       "generator": "claude",
       "rendered": false,
       "mode": "0640",
-      "sha256": "82613e6733d672e962f2c83ce722efef5548085dac4fe654f08300e4726cdb28"
+      "sha256": "79d01b1c53fa6d750dcccb951beebb771766b71d9067e07f69b9d0b3a66d41bd"
     },
     {
       "path": ".claude/conventions/REGISTRY.yaml",
@@ -138,7 +130,7 @@
       "generator": "claude",
       "rendered": false,
       "mode": "0640",
-      "sha256": "5fa5baf5179b59ccf525f58490884f4a2088f005188a9f882fc6c671f87823dc"
+      "sha256": "ed457537abf2a176eba2b8d2d0c1dd0e79366de042a2be0c66155d9ff6b95112"
     },
     {
       "path": ".claude/conventions/code-quality/CLAUDE.md",
@@ -170,7 +162,7 @@
       "generator": "claude",
       "rendered": false,
       "mode": "0640",
-      "sha256": "5ede1b2a742be82032366e6cb6041ba0e54ad4b487232a42ed434e47a2c37ca4"
+      "sha256": "9090244bb89352d0092d654bc6fbd6614e4d5e051343e528f433d487dbc3168b"
     },
     {
       "path": ".claude/conventions/intent-markers.md",
@@ -186,7 +178,7 @@
       "generator": "claude",
       "rendered": false,
       "mode": "0640",
-      "sha256": "09d5c1e7fb80fbff34c6d6581aa538a191ffc8def7fc0b1a7acd9f716595cac8"
+      "sha256": "e2a7ce04093f3e822b76e014a4ad88430555ea53c6fcca487d95978cd20acda2"
     },
     {
       "path": ".claude/conventions/structural.md",
@@ -218,7 +210,15 @@
       "generator": "claude",
       "rendered": true,
       "mode": "0640",
-      "sha256": "e5e0987e379c8442e92d66d2aaf05cce53140f14f89fe9f23deae4fd2c06e19a"
+      "sha256": "c7c8291d76e588fc20f40f7c9fb789a02e7bad32ed19519c44db745dced0b0ea"
+    },
+    {
+      "path": ".claude/skills/no-review-change/SKILL.md",
+      "template": "ai/common/claude/.claude/skills/no-review-change/SKILL.md.template",
+      "generator": "claude",
+      "rendered": true,
+      "mode": "0640",
+      "sha256": "951aed54c52647848794eccad3fff2da63d2a656f86196bd07f6793ebc3f55fd"
     },
     {
       "path": ".claude/skills/phase/SKILL.md",
@@ -226,7 +226,15 @@
       "generator": "claude",
       "rendered": true,
       "mode": "0640",
-      "sha256": "d40a5e7c8f3d82b42f96789df3d14156b831c0d94133b4f21db8c2604b52cf56"
+      "sha256": "9e0968d5ebdf8e6b31f7329f04aa236da6787a53885a40373e829aa9009703d8"
+    },
+    {
+      "path": ".claude/skills/stack-check/SKILL.md",
+      "template": "ai/common/claude/.claude/skills/stack-check/SKILL.md.template",
+      "generator": "claude",
+      "rendered": true,
+      "mode": "0640",
+      "sha256": "5c14d00f932aab4a8621581a2dd05c2be20edf360349b04c7f31c4cd3131a93a"
     },
     {
       "path": ".cursor/rules/common-workflow.mdc",
@@ -234,7 +242,7 @@
       "generator": "cursor",
       "rendered": true,
       "mode": "0640",
-      "sha256": "fa026258bdc68ce7fbd4344f1f846ea87d40857a083849127c7c02ae0f7c0d05"
+      "sha256": "09db581462fd57496c8b8031cbfb1f4f6c22c9017a92a0d0464ccc6c4f00a0dc"
     },
     {
       "path": ".vscode/extensions.json",
@@ -258,7 +266,7 @@
       "generator": "pointers",
       "rendered": true,
       "mode": "0640",
-      "sha256": "bf1eceebe8dc12a58e805cd5a884fbd0470642e738b8542acadc664772c13785"
+      "sha256": "53b570c6b23c9a63cee3cf306fd2b90716bb57ef7323b8612c4871c56564826c"
     },
     {
       "path": "GEMINI.md",
@@ -266,7 +274,7 @@
       "generator": "pointers",
       "rendered": true,
       "mode": "0640",
-      "sha256": "bf1eceebe8dc12a58e805cd5a884fbd0470642e738b8542acadc664772c13785"
+      "sha256": "53b570c6b23c9a63cee3cf306fd2b90716bb57ef7323b8612c4871c56564826c"
     },
     {
       "path": "specs/WORKFLOW.md",
@@ -274,7 +282,7 @@
       "generator": "specs",
       "rendered": true,
       "mode": "0640",
-      "sha256": "c1af740d557085ce87dede954cf5ff180a47045f382f639be614e4e78de68062"
+      "sha256": "9c057373717d8e8031ed955a62c84aa947e9c54e717eadbfd3913b39870b2461"
     }
   ]
 }
