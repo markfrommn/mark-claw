@@ -3,7 +3,7 @@ name: common-worktree
 description: Ensure the current session is in a git worktree on the correct branch before phase work begins. Invoked at the start of the /phase skill. Resolves the Linear branch for the phase's issue(s), creates/reuses the branch and worktree (via cwft when available, raw git otherwise), and STOPS cleanly if not in a git repo or the user declines. Use whenever a runbook needs "get me onto the right branch in the right worktree first."
 argument-hint: <ISSUE-123 [ISSUE-124 ...]>  (the phase's Linear issue id(s), lowest-numbered first)
 ---
-<!-- BEGIN cwft-ai claude set-v1 1d9ad20bd38daa0f83192ed5f450c478d06c04b2 — rendered by cwft; edit the template, not this file -->
+<!-- BEGIN cwft-ai claude set-v2 f331378ef71fa00379570cba93d6c1906c024eb5 — rendered by cwft; edit the template, not this file -->
 
 # common-worktree — branch + worktree preflight
 
@@ -199,6 +199,13 @@ elif git -C "$MAIN_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then
 else
   git -C "$MAIN_ROOT" worktree add -b "$BRANCH" "$WT_DIR" "origin/main"       # brand-new branch off origin/main
 fi
+
+# Preserve correct feature tracking, but clear inherited base/main tracking
+# so push.autoSetupRemote can publish the feature ref on the first bare push.
+BRANCH_UPSTREAM="$(git -C "$MAIN_ROOT" for-each-ref --format='%(upstream:short)' "refs/heads/$BRANCH")"
+if [ -n "$BRANCH_UPSTREAM" ] && [ "$BRANCH_UPSTREAM" != "origin/$BRANCH" ]; then
+  git -C "$MAIN_ROOT" branch --unset-upstream "$BRANCH"
+fi
 cd "$WT_DIR"
 ```
 
@@ -237,4 +244,4 @@ create worktree (cwft session new --no-tmux, else git worktree add) ─▶ cd �
 Use **AskUserQuestion** for any judgment call not covered above (ambiguous issue mapping, an
 unexpected dirty worktree, a base-ref choice). When in doubt, prefer stopping with a clear message
 over guessing.
-<!-- END cwft-ai claude set-v1 1d9ad20bd38daa0f83192ed5f450c478d06c04b2 -->
+<!-- END cwft-ai claude set-v2 f331378ef71fa00379570cba93d6c1906c024eb5 -->

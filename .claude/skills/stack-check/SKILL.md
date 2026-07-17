@@ -1,9 +1,10 @@
 ---
+name: stack-check
 description: Pre-PR stack-conformance gate (read-only). Deliberately audit the working diff for stack violations — disallowed/duplicate libs, air-gap breaks, hand-edited generated files, and the stack's architectural-boundary rules. Run before opening a PR. Not a bug hunt — for correctness/quality review use /code-review.
 argument-hint: "[base-ref, e.g. origin/main...HEAD] (default: working tree vs HEAD)"
 allowed-tools: Bash, Read, Grep, Glob
 ---
-<!-- BEGIN cwft-ai claude set-v1 1d9ad20bd38daa0f83192ed5f450c478d06c04b2 — rendered by cwft; edit the template, not this file -->
+<!-- BEGIN cwft-ai claude set-v2 f331378ef71fa00379570cba93d6c1906c024eb5 — rendered by cwft; edit the template, not this file -->
 
 Audit the current changes against this stack's approved-stack table and the `CLAUDE.md` hard rules +
 pre-PR checklist. Read-only — **report findings, do not fix** unless the user asks.
@@ -48,7 +49,7 @@ Also check the dependency manifests for added/duplicate dependencies.
 1. **Approved stack only — no duplicate-purpose libs.** This repo standardizes on the stack
    in `specs/TOOLSPEC.md` ("Selected Stack (Summary)"); flag any added dependency that duplicates an
    approved tool's purpose:
-   - Orchestrator other than **Prefect 3** (flows/tasks are plain Python with Prefect decorators).
+
    - Dep/project manager other than **uv** (workspace, single `uv.lock`) — no Poetry / pip-tools.
    - Build backend other than **hatchling**.
    - Validation/models other than **Pydantic v2**; config other than **pydantic-settings**.
@@ -59,8 +60,9 @@ Also check the dependency manifests for added/duplicate dependencies.
    - HTTP client other than **httpx** (no requests/aiohttp as a second client).
    - Lint+format other than **Ruff** (no Black/isort/flake8 — Ruff replaces all three, the Biome analog
      here); type checker other than **mypy** (+ the Pydantic plugin).
-   - Testing other than **pytest** + `prefect_test_harness` + **respx**; native packaging other than
-     **nFPM**; SBOM other than **CycloneDX** (`cyclonedx-py`).
+   - Testing that conflicts with this repo's declared test stack (pytest. Run `uv run pytest` from the repo root.
+); native
+     packaging other than **nFPM**; SBOM other than **CycloneDX** (`cyclonedx-py`).
    - Any brand-new **direct** dependency not covered by TOOLSPEC → ⚠️ "needs TOOLSPEC update" (with
      `file:line` in the relevant `pyproject.toml`) unless clearly a deliberate approved-stack change.
      Scope this to **direct** additions (`[project.dependencies]`/`[project.optional-dependencies]`/
@@ -130,19 +132,16 @@ Also check the dependency manifests for added/duplicate dependencies.
    Prettier-for-Python config, or a JS-ecosystem formatter pointed at `.py` files — ❌ "wrong ecosystem;
    Ruff formats Python here".
 
-8. **Quality gates.** The repo's local-gates DoD (the rendered `specs/WORKFLOW.md`) is: `uv lock --check && uv run
-   ruff format --check && uv run ruff check && uv run mypy && uv run pytest -m 'not integration' && uv
-   build --all-packages`. Note whether the diff passes each; run the quick ones if practical. `uv build
-   --all-packages` matters here even for content/config-only-looking changes — a packaging-metadata or
-   Hatchling build break won't surface from lint/type/test alone (and plain `uv build` at the repo root
-   is wrong for this workspace — the `--all-packages` flag builds every workspace member). DB/integration
-   tests are marked/service-backed (DESIGN-SPEC Part III) and excluded from the default fast pass by the
-   `-m 'not integration'` marker. Report the first
-   failure with `file:line`.
+8. **Quality gates.** The repo's local-gates DoD (the rendered `specs/WORKFLOW.md`) is:
+   `uv lock --check && uv run ruff format --check && uv run ruff check . && uv run mypy && uv run pytest -m 'not integration' && uv build`. Note whether the diff passes each command; run the quick ones if practical.
+   The build step matters even for content/config-only-looking changes — a packaging-metadata or
+   Hatchling build break will not surface from lint/type/test alone. DB/integration tests are
+   marked/service-backed and excluded from the default fast pass by the `-m 'not integration'`
+   marker. Report the first failure with `file:line`.
 
 
 ## Output
 
 A concise checklist verdict (the items above), then a short prioritized list of must-fix (❌) and
 should-fix (⚠️) items with locations. End with an overall **PASS / NEEDS-WORK**.
-<!-- END cwft-ai claude set-v1 1d9ad20bd38daa0f83192ed5f450c478d06c04b2 -->
+<!-- END cwft-ai claude set-v2 f331378ef71fa00379570cba93d6c1906c024eb5 -->

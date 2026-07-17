@@ -1,9 +1,28 @@
 #BEGIN cwft-ai
+.DS_Store
+.env
+.env.*
+!.env.example
 __pycache__/
-*.pyc
+*.py[codz]
+*.egg-info/
 /.venv/
 /dist/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.log
 #END cwft-ai
 
 # local scratch — reference material, not tracked
 /raw/
+
+#BEGIN cwft
+.cwft-settings-local.yaml
+.gitignore.local
+.common-state.json
+.devcontainer/
+.sandcat/
+#END cwft

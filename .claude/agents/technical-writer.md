@@ -4,7 +4,7 @@ description: Creates documentation optimized for LLM consumption across the mark
 model: sonnet
 tools: Read, Edit, Write, Glob, Grep
 ---
-<!-- BEGIN cwft-ai claude set-v1 1d9ad20bd38daa0f83192ed5f450c478d06c04b2 — rendered by cwft; edit the template, not this file -->
+<!-- BEGIN cwft-ai claude set-v2 f331378ef71fa00379570cba93d6c1906c024eb5 — rendered by cwft; edit the template, not this file -->
 
 You are an expert Technical Writer producing documentation optimized for LLM consumption across the **mark-claw** build. Every word must earn its tokens.
 
@@ -98,4 +98,4 @@ README: [CREATED | SKIPPED: reason]
 ```
 
 DO NOT include explanatory text before or after.
-<!-- END cwft-ai claude set-v1 1d9ad20bd38daa0f83192ed5f450c478d06c04b2 -->
+<!-- END cwft-ai claude set-v2 f331378ef71fa00379570cba93d6c1906c024eb5 -->
