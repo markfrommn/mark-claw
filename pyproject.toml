@@ -3,11 +3,11 @@ name = "mark-claw"
 version = "0.1.0"
 description = "Tooling layer for the mark-claw personal AI assistant system (no personal data, no secrets)."
 requires-python = ">=3.12"
-# Runtime dependency set is intentionally empty: the tooling layer is stdlib-only
-# (argparse CLI + the built-in macOS `security`/`age` binaries). The framework
-# deny-list test (tests/unit/test_deny_list.py) guards this against agent-runtime
-# packages per MARK-CLAW-TOOLS.md §12.
-dependencies = []
+# Runtime surface is stdlib + PyYAML (config parsing — Python ships no stdlib
+# YAML). The dependency-allowlist + framework deny-list test
+# (tests/unit/test_deny_list.py) guards this minimal surface against
+# agent-runtime packages per MARK-CLAW-TOOLS.md §12.
+dependencies = ["pyyaml>=6.0"]
 
 [project.scripts]
 mclaw = "mclaw_core.cli:main"
@@ -43,6 +43,12 @@ module = "tests.*"
 # Tests use pytest fixtures/monkeypatch that don't need full strictness.
 disallow_untyped_defs = false
 disallow_incomplete_defs = false
+
+[[tool.mypy.overrides]]
+module = "yaml"
+# PyYAML's bundled type info varies by install; treat as best-effort. The
+# doctor's own parsing narrows the result (isinstance(data, dict)) before use.
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

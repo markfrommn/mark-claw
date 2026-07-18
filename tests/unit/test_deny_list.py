@@ -1,9 +1,17 @@
-"""Framework deny-list guard (MARK-CLAW-TOOLS.md §12).
+"""Runtime dependency allowlist + framework deny-list (MARK-CLAW-TOOLS.md §12).
 
-Asserts that no dependency declared in ``pyproject.toml`` — runtime, dev group,
-or build-system — matches an agent-runtime framework the project evaluated and
-declined. Prompt instructions do not enforce "no agent frameworks"; this test
-and the empty runtime dependency set do.
+Two complementary guards on ``pyproject.toml``:
+
+* :func:`test_runtime_dependencies_are_allowlisted` — the runtime surface is
+  audited-minimal and **allowlisted**. Every runtime dep must be in
+  :data:`ALLOWED_RUNTIME_DEPS`. A smuggled non-allowlisted dep fails here.
+  (Replaces the former empty-deps assertion; ``pyyaml`` is now admitted for
+  config parsing — Python ships no stdlib YAML — per B2/DEV-13.)
+* :func:`test_no_agent_framework_dependencies` — no declared dep (runtime, dev,
+  build-system) matches an agent-framework deny-glob. A smuggled framework is
+  caught here even if it were (mistakenly) added to the runtime allowlist.
+
+Prompt instructions do not enforce "no agent frameworks"; these tests do.
 """
 
 from __future__ import annotations
@@ -22,6 +30,12 @@ DENY_GLOBS = [
     "hermes*",
     "vellum*",
 ]
+
+#: Runtime dependencies the tooling layer is permitted to declare. The runtime
+#: surface stays audited-minimal; adding a dependency requires a deliberate edit
+#: here (preserving the property the former empty-deps assertion protected).
+#: ``pyyaml`` is admitted for YAML config parsing — Python has no stdlib YAML.
+ALLOWED_RUNTIME_DEPS: frozenset[str] = frozenset({"pyyaml"})
 
 PYPROJECT = Path(__file__).resolve().parents[2] / "pyproject.toml"
 
@@ -57,10 +71,22 @@ def test_pyproject_exists() -> None:
     assert PYPROJECT.is_file()
 
 
-def test_runtime_dependencies_are_empty() -> None:
-    # The tooling layer is stdlib-only; keep the runtime surface empty.
+def test_runtime_dependencies_are_allowlisted() -> None:
+    """Every runtime dep must be in the approved allowlist.
+
+    The runtime surface is audited-minimal, now expressed as an allowlist so
+    ``pyyaml`` (config parsing) can be admitted without weakening the guarantee
+    that the former empty-deps assertion protected. A smuggled non-allowlisted
+    runtime dep fails here; a smuggled framework is additionally caught by
+    :func:`test_no_agent_framework_dependencies`.
+    """
     data = tomllib.loads(PYPROJECT.read_text())
-    assert data["project"]["dependencies"] == []
+    declared = {_dist_name(r) for r in data["project"].get("dependencies", [])}
+    extra = declared - ALLOWED_RUNTIME_DEPS
+    assert not extra, (
+        f"non-allowlisted runtime dependencies declared: {sorted(extra)} "
+        "(extend ALLOWED_RUNTIME_DEPS only after review)"
+    )
 
 
 def test_no_agent_framework_dependencies() -> None:

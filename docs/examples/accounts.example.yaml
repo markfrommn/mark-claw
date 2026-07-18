@@ -1,0 +1,26 @@
+# Example mark-claw account definitions.
+# Copy to ~/.config/mark-claw/<profile>/accounts.yaml and replace the
+# placeholders. Placeholder values ONLY — no real identifiers in this repo.
+# Schema: design §6.1.
+
+email:
+  - id: work
+    address: you@example.com
+    provider: gmail           # gmail | graph
+    auth:
+      client_ref: "keychain://mark-claw-<profile>/google-client_secret"
+      token_cache: "$STATE/secrets/google/work/"
+    roles: [mail]
+  - id: personal
+    address: you@your-domain.example
+    provider: graph
+    auth:
+      client_ref: "keychain://mark-claw-<profile>/entra-app-client_secret"
+      token_cache: "$STATE/secrets/msal/personal/"
+    roles: [mail, calendar, onedrive]
+
+# Addresses the system may email via mclaw-send-self (must be a subset of the
+# addresses above). The send wrapper rejects any other recipient.
+own_addresses:
+  - you@example.com
+  - you@your-domain.example

@@ -1,0 +1,24 @@
+# Example mark-claw settings.
+# Copy to ~/.config/mark-claw/<profile>/settings.yaml and replace the
+# placeholders with your own values. Placeholder values ONLY — no real
+# identifiers live in this repo. Schema: design §6.1.
+
+vault:
+  # Absolute path to your Obsidian vault (C1 / DEV-18 creates the tree).
+  path: /Users/you/Documents/Obsidian/YourVault
+
+# IANA timezone name; empty = system local.
+timezone: America/Chicago
+
+profile:
+  display_name: YourDisplay
+
+runtime:
+  billing: subscription   # subscription | api (design §2.3)
+  models:
+    triage-judge: ""      # optional model override for the gray-zone judge
+
+limits:
+  max_backfill_pages: 5
+  alert_rate_cap: 5       # max urgent alerts per sweep
+  relabel_window_days: 14 # relabel-detection lookback

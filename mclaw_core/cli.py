@@ -1,9 +1,10 @@
 """``mclaw`` command-line entry point.
 
-Stdlib ``argparse`` only — the tooling layer keeps its runtime dependency set
-empty (the framework deny-list test guards this). Most subcommands are stubs at
-this stage of the build; ``secret`` is functional and ``auth`` is a deliberate
-stub tracked in DEV-31.
+argparse CLI over a minimal runtime surface (stdlib + PyYAML for config
+parsing); the dependency allowlist + framework deny-list test guards it. Most
+subcommands are stubs at this stage of the build; ``secret`` is functional,
+``doctor`` validates the config/state trees, and ``auth`` is a deliberate stub
+tracked in DEV-31.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import argparse
 import sys
 from collections.abc import Sequence
 
-from . import __version__, paths, secret
+from . import __version__, doctor, paths, secret
 
 #: Subcommands that are intentionally not implemented in this unit. Each prints a
 #: clear message and exits non-zero so callers cannot mistake a stub for a no-op.
@@ -34,29 +35,21 @@ def _print_stub(command: str, *, tracked: str | None = None) -> int:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    """Report the resolved profile and whether config/state roots exist.
+    """Validate the config/state trees; with ``--init`` create them first.
 
-    Minimal for this unit: full validation and ``--init`` arrive in DEV-13. It
-    must run and print a sensible report even when the roots are missing (they
-    will be at this stage).
+    Delegates to :func:`mclaw_core.doctor.run_doctor` and prints the rendered
+    report. The report's exit code is returned directly:
+
+    * bare ``doctor`` — 0 iff every hard check is ok (vault-absent is WARN,
+      not a hard fail);
+    * ``doctor --init`` — 0 whenever tree creation succeeds, regardless of
+      hard FAILs on deferred downstream items (e.g. unset vault). The full
+      checklist still prints as information.
     """
     profile = paths.resolve_profile()
-    config = paths.config_root(profile)
-    state = paths.state_root(profile)
-
-    print(f"mclaw doctor — profile: {profile}")
-    all_ok = True
-    for label, path in (("config", config), ("state", state)):
-        exists = path.is_dir()
-        all_ok = all_ok and exists
-        status = "ok" if exists else "MISSING"
-        print(f"  {label:<6} {path}  [{status}]")
-    if not all_ok:
-        print(
-            "\nOne or more roots are missing. This is expected before "
-            "`mclaw doctor --init` (DEV-13) has created them.",
-        )
-    return 0
+    report = doctor.run_doctor(profile, init=bool(getattr(args, "init", False)))
+    print(report.render())
+    return report.exit_code
 
 
 def cmd_auth(args: argparse.Namespace) -> int:
@@ -112,7 +105,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", metavar="<command>")
 
-    doctor = sub.add_parser("doctor", help="report profile and config/state paths")
+    doctor = sub.add_parser(
+        "doctor",
+        help="validate config/state trees; --init creates them idempotently",
+    )
+    doctor.add_argument(
+        "--init",
+        action="store_true",
+        help="create config + state trees idempotently, then validate",
+    )
     doctor.set_defaults(func=cmd_doctor)
 
     auth = sub.add_parser(

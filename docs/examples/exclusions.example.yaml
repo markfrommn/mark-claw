@@ -1,0 +1,14 @@
+# Example mark-claw blocked / ephemeral exclusions.
+# Copy to ~/.config/mark-claw/<profile>/exclusions.yaml and replace the
+# placeholders. Placeholder values ONLY — no real identifiers in this repo.
+# The exclusion gate (B3 / DEV-14) compiles this file. Schema: design §5, §6.1.
+
+chat:
+  slack-work:
+    - {id: "C0EXAMPLE", name: "#private-channel", tier: blocked, also_match: ["private-channel"]}
+    - {id: "D0EXAMPLE", name: "DM: Someone",       tier: ephemeral}
+drive:
+  work-gdrive:
+    - {path: "/HR/", tier: blocked}   # prefix; inherits to subfolders
+meetings:
+  - {series_id: "series-id-placeholder", title: "Private 1:1", tier: blocked}
