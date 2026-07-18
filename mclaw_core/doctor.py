@@ -31,6 +31,7 @@ and exit 0 — the pre-init state is expected, and the hint points at ``--init``
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -203,6 +204,15 @@ def _check_config_file(report: DoctorReport, path: Path) -> dict[str, object] | 
     except yaml.YAMLError as exc:
         report.checks.append(Check(name, STATUS_FAIL, f"YAML parse error: {exc}"))
         return None
+    except (OSError, UnicodeDecodeError) as exc:
+        # An existing-but-unreadable file (e.g. ``PermissionError``) or a
+        # non-UTF-8 file must surface as a hard FAIL checklist line, not abort
+        # the doctor with a traceback. Keep the detail short (class name only)
+        # so no exception-chain noise leaks into the report.
+        report.checks.append(
+            Check(name, STATUS_FAIL, f"unreadable: {type(exc).__name__}")
+        )
+        return None
     if not isinstance(data, dict):
         report.checks.append(Check(name, STATUS_FAIL, "top-level is not a mapping"))
         return None
@@ -219,6 +229,15 @@ def _check_perm(
     report: DoctorReport, path: Path, rel: str, want_mode: int
 ) -> None:
     label = f"perms {rel}/ ({oct(want_mode)[2:]})"
+    if path.is_symlink():
+        # A symlink at a fail-closed secure dir would be followed by stat/chmod,
+        # comparing and mutating the link's *target* (an arbitrary directory
+        # outside the state tree) and letting future secret/quarantine/ephemeral
+        # writes follow the link. Refuse to trust it.
+        report.checks.append(
+            Check(label, STATUS_FAIL, "is a symlink — not trusted")
+        )
+        return
     if not path.is_dir():
         report.checks.append(Check(label, STATUS_FAIL, "missing"))
         return
@@ -234,19 +253,28 @@ def _check_keychain(report: DoctorReport, profile: str) -> None:
 
     ``list_accounts`` runs ``security dump-keychain`` and returns the account
     slugs for this profile's service; it never resolves or returns a secret
-    value, so neither does this check. ``FileNotFoundError`` (``security``
-    missing) is a hard FAIL — the keychain integration cannot work without it;
-    a :class:`secret.SecretError` (locked/unreachable keychain) is a soft WARN.
+    value, so neither does this check. A missing ``security`` binary is a hard
+    FAIL — the keychain integration cannot work without it. The binary's
+    presence is probed directly via ``shutil.which`` rather than relying on a
+    ``FileNotFoundError`` from ``list_accounts``: ``secret`` catches that
+    internally and re-raises it as :class:`secret.SecretError`, so the
+    missing-binary case would otherwise fall into the soft WARN branch and the
+    doctor would exit 0 with keychain integration dead. A
+    :class:`secret.SecretError` (locked/unreachable keychain) is a soft WARN.
     """
     service = secret.service_name(profile)
     label = f"keychain {service}"
-    try:
-        secret.list_accounts(profile=profile)
-    except FileNotFoundError:
+    if shutil.which(secret.SECURITY) is None:
         report.checks.append(
-            Check(label, STATUS_FAIL, "`security` not on PATH")
+            Check(
+                label,
+                STATUS_FAIL,
+                "`security` not on PATH — keychain integration cannot run",
+            )
         )
         return
+    try:
+        secret.list_accounts(profile=profile)
     except secret.SecretError:
         # Doctor intentionally does not forward secret-module exception text —
         # a fixed string means a future value-bearing SecretError can never leak

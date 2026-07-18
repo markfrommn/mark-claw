@@ -212,22 +212,41 @@ class InitResult:
     fixed_perms: list[Path]
 
 
+class StateInitError(Exception):
+    """Raised when state init refuses to trust an unsafe path.
+
+    A symlink placed at one of the fail-closed secure dirs (``secrets``,
+    ``quarantine``, ``spool/ephemeral``) would be followed by ``is_dir`` /
+    ``mkdir(exist_ok=True)`` / ``stat`` / ``chmod``, so init would treat the
+    link's target as a valid secure dir, apply ``chmod(0700)`` to an arbitrary
+    directory outside the state tree, and let future secret/quarantine/ephemeral
+    writes follow the link. Init fails closed instead.
+    """
+
+
 def init_config_tree(*, profile: str) -> InitResult:
     """Create skeleton config files under the profile config root.
 
     Non-destructive: a file that already exists is **never** overwritten —
-    config is human-authored. Parent directories are created as needed.
+    config is human-authored. Creation is atomic via exclusive-open (mode
+    ``"x"``): the prior check-then-write (``exists()`` → ``write_text``, which
+    opens in truncating ``"w"`` mode) was a TOCTOU race that could clobber a
+    file appearing between the check and the write. With ``"x"`` the open
+    itself fails atomically if the path already exists, and the existing bytes
+    are left untouched. Parent directories are created as needed.
     """
     root = paths.config_root(profile)
     created: list[Path] = []
     reused: list[Path] = []
     for name, content in CONFIG_SKELETONS.items():
         path = root / name
-        if path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with path.open("x") as f:
+                f.write(content)
+        except FileExistsError:
             reused.append(path)
             continue
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
         created.append(path)
     return InitResult(created=created, reused=reused, fixed_perms=[])
 
@@ -240,6 +259,14 @@ def init_state_tree(*, profile: str) -> InitResult:
     ``mode`` argument is reduced by the process umask, so the explicit ``chmod``
     after creation is what actually guarantees the bits — a widened secure dir
     is corrected back to 0700 on the next init.
+
+    Fail-closed guarantee: a symlink at one of :data:`SECURE_DIRS` is refused
+    with :class:`StateInitError` rather than followed. ``is_dir`` /
+    ``mkdir(exist_ok=True)`` / ``stat`` / ``chmod`` all resolve a symlink, so a
+    link at ``secrets``/``quarantine``/``spool/ephemeral`` would otherwise let
+    init ``chmod(0700)`` the link's target (an arbitrary directory outside the
+    state tree) and let future writes follow it. Non-secure dirs are unaffected
+    (out of scope).
     """
     root = paths.state_root(profile)
     created: list[Path] = []
@@ -248,6 +275,12 @@ def init_state_tree(*, profile: str) -> InitResult:
     for rel in STATE_DIRS:
         path = root / rel
         target_mode = SECURE_DIR_MODE if rel in SECURE_DIRS else DEFAULT_DIR_MODE
+        if rel in SECURE_DIRS and path.is_symlink():
+            raise StateInitError(
+                f"refusing to init {path}: a symlink at a fail-closed secure "
+                f"dir ({rel!r}) is not trusted (stat/chmod would follow the "
+                f"link and mutate its target)"
+            )
         existed = path.is_dir()
         path.mkdir(parents=True, exist_ok=True)
         cur_mode = path.stat().st_mode & 0o777

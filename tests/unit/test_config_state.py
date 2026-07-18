@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import os
 
+import pytest
+
 from mclaw_core import config_state, paths
 
 
@@ -40,6 +42,25 @@ def test_init_config_is_non_destructive(monkeypatch, tmp_path) -> None:
     settings.write_text(authored)
     result = config_state.init_config_tree(profile="mark")
     assert settings.read_text() == authored
+    assert settings in result.reused
+    assert settings not in result.created
+
+
+def test_init_config_preserves_existing_bytes_exactly(
+    monkeypatch, tmp_path
+) -> None:
+    """The atomic exclusive-open (``"x"``) must leave an existing file's bytes
+    untouched — byte-for-byte preservation across a re-init, even when the
+    authored content is longer/shorter than the skeleton would have been."""
+    _xdg(monkeypatch, tmp_path)
+    root = paths.config_root("mark")
+    root.mkdir(parents=True)
+    settings = root / "settings.yaml"
+    # Non-trivial content unlike the skeleton — its bytes must survive verbatim.
+    authored = "# operator\nvault: {path: /x}\n" + ("k: v\n" * 50)
+    settings.write_bytes(authored.encode("utf-8"))
+    result = config_state.init_config_tree(profile="mark")
+    assert settings.read_bytes() == authored.encode("utf-8")
     assert settings in result.reused
     assert settings not in result.created
 
@@ -157,3 +178,47 @@ def test_init_state_creates_nested_ephemeral(monkeypatch, tmp_path) -> None:
     assert spool.is_dir()
     assert (ephemeral.stat().st_mode & 0o777) == 0o700
     assert (spool.stat().st_mode & 0o777) == 0o755
+
+
+@pytest.mark.parametrize("rel", ["secrets", "quarantine", "spool/ephemeral"])
+def test_init_state_rejects_symlink_at_secure_dir(
+    monkeypatch, tmp_path, rel
+) -> None:
+    """A symlink placed at a fail-closed secure dir must make init refuse —
+    is_dir/mkdir(exist_ok=True)/stat/chmod all follow the link, so trusting it
+    would chmod an arbitrary directory outside the state tree. Covers each
+    SECURE_DIR (secrets, quarantine, spool/ephemeral)."""
+    _xdg(monkeypatch, tmp_path)
+    # Build the real layout first so the parent of `rel` exists.
+    config_state.init_state_tree(profile="mark")
+    root = paths.state_root("mark")
+    secure = root / rel
+    # `rel` may be nested (spool/ephemeral); remove the real dir, then link.
+    secure.rmdir()
+    target = tmp_path / "attacker-controlled"
+    target.mkdir()
+    secure.symlink_to(target)
+    with pytest.raises(config_state.StateInitError) as excinfo:
+        config_state.init_state_tree(profile="mark")
+    assert "symlink" in str(excinfo.value)
+    # The link's target must NOT have been chmod'd to 0700 by init.
+    assert (target.stat().st_mode & 0o777) != 0o700
+
+
+def test_init_state_allows_symlink_at_nonsecure_dir(
+    monkeypatch, tmp_path
+) -> None:
+    """Non-secure dirs are out of scope for the fail-closed symlink guard — a
+    symlink at a non-secure dir is left untouched (init neither raises nor
+    moves the link). Pinning the scope so the guard can't creep wider."""
+    _xdg(monkeypatch, tmp_path)
+    config_state.init_state_tree(profile="mark")
+    root = paths.state_root("mark")
+    # `cursors` is a non-secure state dir; replace it with a symlink.
+    (root / "cursors").rmdir()
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    (root / "cursors").symlink_to(target)
+    # Must not raise (out of scope), and the link is still a link afterwards.
+    config_state.init_state_tree(profile="mark")
+    assert (root / "cursors").is_symlink()

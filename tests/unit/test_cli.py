@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import shutil
+import stat
 from pathlib import Path
 
 import pytest
@@ -327,33 +329,134 @@ def test_doctor_keychain_reachable_never_prints_account(
     assert sentinel not in out
 
 
-def test_doctor_keychain_missing_security_is_hard_fail(
+def test_doctor_keychain_missing_security_binary_is_hard_fail(
     monkeypatch, capsys, tmp_path
 ) -> None:
-    _xdg(monkeypatch, tmp_path)
+    """A missing ``security`` binary must FAIL hard and exit nonzero.
 
-    def _boom(*, profile):
-        raise FileNotFoundError("security")
-
-    monkeypatch.setattr(secret, "list_accounts", _boom)
-    cli.main(["doctor", "--init"])
+    The probe is ``shutil.which(secret.SECURITY)``; ``list_accounts`` catches
+    ``FileNotFoundError`` internally and re-raises it as :class:`SecretError`,
+    so relying on the exception would let the missing-binary case fall into the
+    soft WARN branch and the doctor would exit 0 with keychain integration dead.
+    Bare ``doctor`` (not ``--init``) so the FAIL contributes to the exit code.
+    """
+    cfg, _ = _xdg(monkeypatch, tmp_path)
+    _stub_keychain_reachable(monkeypatch)
+    cli.main(["doctor", "--init"])  # scaffold so the deep checklist runs
+    capsys.readouterr()
+    # Now hide the binary: which() → None must short-circuit to a hard FAIL
+    # without ever calling list_accounts.
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    rc = cli.main(["doctor"])
     out = capsys.readouterr().out
-    rc_line = out
-    assert "keychain" in rc_line
-    assert "FAIL" in rc_line
+    assert rc == 1
+    assert "keychain" in out
+    assert "FAIL" in out
 
 
 def test_doctor_keychain_locked_is_warn(monkeypatch, capsys, tmp_path) -> None:
-    _xdg(monkeypatch, tmp_path)
+    """``security`` present (``which`` returns a path) but the keychain is
+    unreachable (``list_accounts`` raises ``SecretError``) stays a soft WARN
+    and keeps the doctor exit at 0 — covers the SurvivingPath+SecretError path
+    after the dead ``FileNotFoundError`` branch was removed."""
+    cfg, _ = _xdg(monkeypatch, tmp_path)
+    _stub_keychain_reachable(monkeypatch)
+    cli.main(["doctor", "--init"])  # green scaffold
+    # Set a valid vault so the only non-ok check is the keychain WARN.
+    vault_dir = tmp_path / "vault"
+    vault_dir.mkdir()
+    _write_valid_settings(
+        cfg / "mark-claw" / "mark" / "settings.yaml", str(vault_dir)
+    )
+    capsys.readouterr()
+    # Real binary on PATH (deterministic), but keychain enumeration fails.
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/security")
 
     def _locked(*, profile):
         raise secret.SecretError("keychain locked")
 
     monkeypatch.setattr(secret, "list_accounts", _locked)
-    cli.main(["doctor", "--init"])
+    rc = cli.main(["doctor"])
     out = capsys.readouterr().out
+    assert rc == 0
     assert "keychain" in out
     assert "WARN" in out
+
+
+def test_doctor_config_file_unreadable_perms_is_hard_fail(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    """A config file that exists but cannot be read (PermissionError) must FAIL
+    hard, exit nonzero, and not raise a traceback. POSIX ``root`` bypasses the
+    ``0o000`` mode, so skip under root."""
+    pytest.importorskip("os")
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root bypasses mode 0o000 — cannot exercise PermissionError")
+    cfg, _ = _xdg(monkeypatch, tmp_path)
+    _stub_keychain_reachable(monkeypatch)
+    cli.main(["doctor", "--init"])  # scaffold
+    capsys.readouterr()
+    accounts = cfg / "mark-claw" / "mark" / "accounts.yaml"
+    os.chmod(accounts, 0o000)
+    try:
+        rc = cli.main(["doctor"])
+        out = capsys.readouterr().out
+    finally:
+        # Restore read/write so pytest's tmp_path cleanup can rm it.
+        os.chmod(accounts, stat.S_IRUSR | stat.S_IWUSR)
+    assert rc == 1
+    assert "accounts.yaml" in out
+    assert "FAIL" in out
+    assert "unreadable" in out
+
+
+def test_doctor_config_file_invalid_utf8_is_hard_fail(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    """A config file containing invalid UTF-8 bytes must FAIL hard, exit
+    nonzero, and not raise a traceback — covers the ``UnicodeDecodeError``
+    branch of the widened handler."""
+    cfg, _ = _xdg(monkeypatch, tmp_path)
+    _stub_keychain_reachable(monkeypatch)
+    cli.main(["doctor", "--init"])  # scaffold
+    capsys.readouterr()
+    accounts = cfg / "mark-claw" / "mark" / "accounts.yaml"
+    # 0xFF is invalid in UTF-8 (and any continuation byte without a leader).
+    accounts.write_bytes(b"\xff\xfe bad bytes\n")
+    rc = cli.main(["doctor"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "accounts.yaml" in out
+    assert "FAIL" in out
+    assert "unreadable" in out
+
+
+def test_doctor_secure_dir_symlink_is_hard_fail(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    """A symlink at a fail-closed secure dir (``secrets/``) must FAIL the
+    ``perms secrets/`` check hard and exit nonzero — the doctor must not follow
+    the link (no chmod on the target, no treating the target as a valid secure
+    dir)."""
+    cfg, st = _xdg(monkeypatch, tmp_path)
+    _stub_keychain_reachable(monkeypatch)
+    cli.main(["doctor", "--init"])  # scaffold real state tree
+    capsys.readouterr()
+    st_root = st / "mark-claw" / "mark"
+    # Replace secrets/ with a symlink to an unrelated directory outside the
+    # state tree. rmtree is safe — init created it with mode 0700 just above.
+    shutil.rmtree(st_root / "secrets")
+    target = tmp_path / "attacker-controlled"
+    target.mkdir()
+    (st_root / "secrets").symlink_to(target)
+    rc = cli.main(["doctor"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "perms secrets/" in out
+    assert "FAIL" in out
+    assert "symlink" in out
+    # The target's mode must NOT have been mutated to 0700 by the doctor check.
+    assert (target.stat().st_mode & 0o777) != 0o700
 
 
 @pytest.mark.parametrize("provider", ["google", "graph", "telegram"])
