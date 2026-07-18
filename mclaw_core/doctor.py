@@ -8,10 +8,12 @@ Two modes (CLI flag ``--init``):
 * ``doctor --init`` — idempotently create both trees
   (:mod:`mclaw_core.config_state`), then run the same validation and print the
   full checklist (useful info — "scaffolding created; here's what's left to
-  configure"). Exits 0 whenever tree creation succeeds, **regardless of hard
-  FAILs on deferred downstream items** (e.g. an unset vault, owned by
-  C1/DEV-18). ``--init`` is a bootstrap command; its exit code reflects
-  scaffolding success, not whether the operator has finished configuration.
+  configure"). Exits 0 when the only FAILs are on **deferred** checks (an
+  unset vault path, owned by C1/DEV-18); any non-deferred hard FAIL (malformed
+  config, a missing ``security`` binary, a secure-dir perm/symlink failure)
+  surfaces nonzero. ``--init`` is a bootstrap command; its exit code reflects
+  scaffolding success plus non-deferred validation, not whether the operator
+  has finished C1-owned configuration.
 
 Checks (design §6.1, §6.2; CLAUDE.md hard rules):
 
@@ -68,6 +70,11 @@ class Check:
     name: str
     status: str
     detail: str = ""
+    #: True only for FAILs whose unset/absent state is owned by a later unit
+    #: (the vault-path-unset check, owned by C1/DEV-18). A deferred FAIL is
+    #: dropped from :attr:`DoctorReport.exit_code` under ``--init`` (bootstrap),
+    #: but still counted by bare ``doctor`` (the validator).
+    deferred: bool = False
 
     def render(self) -> str:
         base = f"  {self.name:<26} [{self.status}]"
@@ -82,11 +89,13 @@ class DoctorReport:
     checks: list[Check] = field(default_factory=list)
     #: True when a root was MISSING and the doctor skipped the deep checks.
     short_circuited: bool = False
-    #: True when ``--init`` ran and both trees were created without raising.
-    #: When set, :attr:`exit_code` is 0 regardless of hard FAILs on deferred
-    #: downstream items (e.g. unset vault) — ``--init`` is a bootstrap command
-    #: whose exit reflects scaffolding success, not full validation.
-    init_succeeded: bool = False
+    #: True when the operator invoked ``--init``. Under ``init``, deferred FAIL
+    #: checks (an unset vault path, owned by C1/DEV-18) are dropped from the
+    #: exit-code computation; non-deferred hard FAILs (malformed config, a
+    #: missing ``security`` binary, a secure-dir perm/symlink failure) still
+    #: surface nonzero. Bare ``doctor`` (init=False) counts every FAIL,
+    #: including deferred ones.
+    init: bool = False
     hint: str = ""
 
     @property
@@ -94,12 +103,14 @@ class DoctorReport:
         if self.short_circuited:
             # MISSING roots are the expected pre-init state, not a hard fail.
             return 0
-        if self.init_succeeded:
-            # ``--init`` bootstrap: scaffolding succeeded; the full checklist is
-            # still rendered (informational), but deferred config gaps (unset
-            # vault, etc.) do not fail the bootstrap exit code.
-            return 0
-        return 1 if any(c.status in _HARD_FAIL for c in self.checks) else 0
+        fails = [c for c in self.checks if c.status in _HARD_FAIL]
+        if self.init:
+            # ``--init`` bootstrap: drop deferred FAILs (unset vault, owned by
+            # C1/DEV-18) from the exit computation. Any non-deferred hard FAIL
+            # (malformed config, missing `security`, secure-dir failure) still
+            # surfaces nonzero — bootstrap success does not mask them.
+            fails = [c for c in fails if not c.deferred]
+        return 1 if fails else 0
 
     def render(self) -> str:
         lines = [f"mclaw doctor — profile: {self.profile}"]
@@ -114,18 +125,28 @@ def run_doctor(profile: str, *, init: bool = False) -> DoctorReport:
     """Run the doctor, optionally initializing both trees first.
 
     Returns a :class:`DoctorReport` whose :attr:`DoctorReport.exit_code` the
-    CLI returns directly. When ``init`` is true and both trees are created
-    without raising, :attr:`DoctorReport.init_succeeded` is set — the report's
-    full checklist still renders (informational), but its exit code is 0
-    regardless of hard FAILs on deferred downstream items.
+    CLI returns directly. When ``init`` is true, both trees are created first
+    and :attr:`DoctorReport.init` is set — deferred FAILs (an unset vault path)
+    are then dropped from the exit computation, but non-deferred hard FAILs
+    still surface nonzero. A :class:`config_state.StateInitError` (a symlinked
+    secure dir refusing init) is swallowed so the validation pass can report
+    it via ``_check_perm`` rather than crashing the CLI; that FAIL is
+    non-deferred and still exits nonzero under ``--init``.
     """
-    init_succeeded = False
     if init:
         config_state.init_config_tree(profile=profile)
-        config_state.init_state_tree(profile=profile)
-        init_succeeded = True
+        try:
+            config_state.init_state_tree(profile=profile)
+        except config_state.StateInitError:
+            # A symlinked secure dir refuses init (fail-closed). Swallow it and
+            # fall through to the validation pass, which re-flags the symlink
+            # via ``_check_perm`` (non-deferred FAIL → nonzero under --init).
+            # ``init`` stays set so deferred downstream gaps (unset vault) are
+            # still exempted; the symlink FAIL is not masked. The doctor
+            # reports rather than crashes.
+            pass
 
-    report = DoctorReport(profile=profile, init_succeeded=init_succeeded)
+    report = DoctorReport(profile=profile, init=init)
 
     cfg = paths.config_root(profile)
     st = paths.state_root(profile)
@@ -318,7 +339,10 @@ def _check_vault(
         return
     raw = vault.get("path", "")
     if not isinstance(raw, str) or not raw.strip():
-        report.checks.append(Check(label, STATUS_FAIL, "unset"))
+        # The unset vault path is the only deferred check: its absent state is
+        # owned by C1/DEV-18, so under ``--init`` it is dropped from the exit
+        # computation. Bare ``doctor`` still counts it as a hard FAIL.
+        report.checks.append(Check(label, STATUS_FAIL, "unset", deferred=True))
         return
     expanded = Path(raw).expanduser()
     if not expanded.is_absolute():

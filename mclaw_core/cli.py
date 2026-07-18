@@ -41,10 +41,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     report. The report's exit code is returned directly:
 
     * bare ``doctor`` — 0 iff every hard check is ok (vault-absent is WARN,
-      not a hard fail);
-    * ``doctor --init`` — 0 whenever tree creation succeeds, regardless of
-      hard FAILs on deferred downstream items (e.g. unset vault). The full
-      checklist still prints as information.
+      not a hard fail; an unset vault path IS a hard FAIL here);
+    * ``doctor --init`` — 0 when the only FAILs are deferred (unset vault);
+      nonzero on any non-deferred hard FAIL (malformed config, missing
+      ``security``, secure-dir perm/symlink failure). The full checklist
+      still prints as information.
     """
     profile = paths.resolve_profile()
     report = doctor.run_doctor(profile, init=bool(getattr(args, "init", False)))

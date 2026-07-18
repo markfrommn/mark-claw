@@ -240,7 +240,9 @@ def _atomic_publish(path: Path, content: str) -> str:
     * Write to a **unique** temp in the SAME directory (so the final link is on
       the same filesystem) via :func:`tempfile.mkstemp` — uniqueness means
       concurrent or stale temps from a prior interrupted run never collide.
-    * ``os.write`` + ``os.fsync`` + ``os.close`` (only the temp is touched
+    * ``os.write`` (looped — a single ``write`` syscall may return fewer
+      bytes than requested, so the buffer is re-sliced and re-submitted until
+      fully flushed) + ``os.fsync`` + ``os.close`` (only the temp is touched
       in flight).
     * Publish with :func:`os.link` (NOT :func:`os.replace`) — ``link`` fails
       with :class:`FileExistsError` if the destination exists, preserving the
@@ -260,7 +262,14 @@ def _atomic_publish(path: Path, content: str) -> str:
     tmp_path = Path(tmp_name)
     try:
         try:
-            os.write(fd, content.encode("utf-8"))
+            # ``os.write`` may short-write (the syscall is allowed to return
+            # fewer bytes than requested); loop until the whole buffer is
+            # flushed, BEFORE fsync + link — otherwise a truncated temp would
+            # be published as the destination.
+            buf = content.encode("utf-8")
+            off = 0
+            while off < len(buf):
+                off += os.write(fd, buf[off:])
             os.fsync(fd)
         finally:
             os.close(fd)

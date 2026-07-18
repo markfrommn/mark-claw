@@ -95,6 +95,40 @@ def test_init_config_atomic_no_tmp_remnants(monkeypatch, tmp_path) -> None:
         assert (root / name).read_bytes() == content.encode("utf-8"), name
 
 
+def test_atomic_publish_handles_short_writes(monkeypatch, tmp_path) -> None:
+    """``_atomic_publish`` must loop until the full buffer is written.
+
+    ``os.write`` is permitted to return fewer bytes than requested (a short
+    write); a single ``write`` would leave a truncated temp that then gets
+    hard-linked into place as the destination. Force one-byte-per-call via a
+    monkeypatch and assert the published file is byte-for-byte correct and that
+    the loop actually iterated once per byte.
+    """
+    real_write = os.write
+    target = tmp_path / "skeleton.yaml"
+    content = config_state.CONFIG_SKELETONS["settings.yaml"]
+    expected = content.encode("utf-8")
+    calls = {"n": 0}
+
+    def one_byte(fd, buf):
+        calls["n"] += 1
+        # Submit at most one byte per syscall to force the short-write path.
+        return real_write(fd, buf[:1])
+
+    monkeypatch.setattr(os, "write", one_byte)
+    try:
+        outcome = config_state._atomic_publish(target, content)
+    finally:
+        monkeypatch.undo()
+
+    assert outcome == "created"
+    # The loop ran once per byte (proving it did not stop after one short write).
+    assert calls["n"] == len(expected)
+    # The published destination is the full intended content, not a prefix.
+    assert target.read_bytes() == expected
+
+
+
 def test_init_config_self_recovers_with_stale_temp(
     monkeypatch, tmp_path
 ) -> None:

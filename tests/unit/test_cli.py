@@ -138,8 +138,9 @@ def test_doctor_init_is_idempotent(monkeypatch, capsys, tmp_path) -> None:
     settings = cfg / "mark-claw" / "mark" / "settings.yaml"
     before = settings.read_text()
     rc = cli.main(["doctor", "--init"])
-    # init_succeeded deterministically forces exit 0; the tighter bound means a
-    # regression of the --init exit-code path can't hide behind the loose (0,1).
+    # Under --init the deferred vault-unset FAIL is dropped, so exit is
+    # deterministically 0; the tighter bound means a regression of the --init
+    # exit-code path can't hide behind the loose (0,1).
     assert rc == 0
     assert settings.read_text() == before
 
@@ -247,7 +248,7 @@ def test_doctor_flags_mapping_missing_required_keys(
 
 
 def test_doctor_vault_unset_fails(monkeypatch, capsys, tmp_path) -> None:
-    cfg, _ = _xdg(monkeypatch, tmp_path)
+    _cfg, _ = _xdg(monkeypatch, tmp_path)
     _stub_keychain_reachable(monkeypatch)
     cli.main(["doctor", "--init"])  # skeleton leaves vault.path empty
     rc = cli.main(["doctor"])
@@ -276,6 +277,74 @@ def test_doctor_init_exits_0_on_fresh_profile_with_vault_unset(
     # The deferred vault gap is still surfaced as information...
     assert "vault path" in out
     assert "FAIL" in out  # ...it just doesn't fail the bootstrap exit code.
+
+
+def test_doctor_init_malformed_config_is_nonzero(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    """``--init`` must not mask a malformed config.
+
+    ``settings.yaml`` that fails to parse is a non-deferred hard FAIL, so
+    ``doctor --init`` exits nonzero — only the deferred vault-unset failure is
+    exempted under ``--init``. Pre-place a malformed settings.yaml so init
+    reuses it (non-destructive), then validation must FAIL hard.
+    """
+    cfg, _ = _xdg(monkeypatch, tmp_path)
+    _stub_keychain_reachable(monkeypatch)
+    settings = cfg / "mark-claw" / "mark" / "settings.yaml"
+    settings.parent.mkdir(parents=True)
+    settings.write_text("vault: [unclosed\n")  # malformed YAML
+    rc = cli.main(["doctor", "--init"])
+    out = capsys.readouterr().out
+    assert rc != 0  # malformed config → nonzero, NOT masked by --init
+    assert "settings.yaml" in out
+    assert "FAIL" in out
+
+
+def test_doctor_init_missing_security_binary_is_nonzero(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    """``--init`` must not mask a missing ``security`` binary.
+
+    The keychain check probes ``shutil.which(secret.SECURITY)``; a missing
+    binary is a non-deferred hard FAIL, so ``doctor --init`` exits nonzero
+    even though scaffolding itself succeeded.
+    """
+    _xdg(monkeypatch, tmp_path)
+    _stub_keychain_reachable(monkeypatch)
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    rc = cli.main(["doctor", "--init"])
+    out = capsys.readouterr().out
+    assert rc != 0  # missing security → nonzero, NOT masked by --init
+    assert "keychain" in out
+    assert "FAIL" in out
+
+
+def test_doctor_init_symlinked_secure_dir_is_nonzero(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    """``--init`` must not mask a symlinked secure dir.
+
+    ``init_state_tree`` refuses the symlink at ``secrets/`` with
+    :class:`StateInitError` (fail-closed); the doctor swallows it and the
+    validation pass re-flags the symlink via ``_check_perm`` as a
+    non-deferred FAIL, so ``doctor --init`` exits nonzero rather than crashing
+    or masking the failure.
+    """
+    _cfg, st = _xdg(monkeypatch, tmp_path)
+    _stub_keychain_reachable(monkeypatch)
+    cli.main(["doctor", "--init"])  # scaffold a real state tree
+    capsys.readouterr()
+    st_root = st / "mark-claw" / "mark"
+    shutil.rmtree(st_root / "secrets")
+    target = tmp_path / "attacker-controlled"
+    target.mkdir()
+    (st_root / "secrets").symlink_to(target)
+    rc = cli.main(["doctor", "--init"])
+    out = capsys.readouterr().out
+    assert rc != 0  # symlinked secure dir → nonzero, NOT masked by --init
+    assert "perms secrets/" in out
+    assert "FAIL" in out
 
 
 def test_doctor_vault_absolute_but_absent_warns_exit0(
@@ -340,7 +409,7 @@ def test_doctor_keychain_missing_security_binary_is_hard_fail(
     soft WARN branch and the doctor would exit 0 with keychain integration dead.
     Bare ``doctor`` (not ``--init``) so the FAIL contributes to the exit code.
     """
-    cfg, _ = _xdg(monkeypatch, tmp_path)
+    _cfg, _ = _xdg(monkeypatch, tmp_path)
     _stub_keychain_reachable(monkeypatch)
     cli.main(["doctor", "--init"])  # scaffold so the deep checklist runs
     capsys.readouterr()
@@ -440,7 +509,7 @@ def test_doctor_secure_dir_symlink_is_hard_fail(
     dir). The ``O_NOFOLLOW`` anchor refuses the symlink at the final component;
     the mode read never resolves the link, and the target's mode is left
     unchanged."""
-    cfg, st = _xdg(monkeypatch, tmp_path)
+    _cfg, st = _xdg(monkeypatch, tmp_path)
     _stub_keychain_reachable(monkeypatch)
     cli.main(["doctor", "--init"])  # scaffold real state tree
     capsys.readouterr()
