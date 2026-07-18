@@ -2,7 +2,7 @@
 
 **Status:** Ready for execution — planned 2026-07-05
 **Inputs:** `MARK-CLAW-SPEC.md` §12 Phase 1 · `MARK-CLAW-TOOLS.md` (ground truth for access paths) · `MARK-CLAW-DESIGN.md` §12 phase mapping (Phase 1 slice)
-**Executor contract:** run steps in order within a stage; Stage A and Stage B1 may run in parallel (A's token flows use the `mclaw auth` helpers from B1). Mark each step done in this file; record deviations inline. Append a status note at the bottom when the phase completes — the Phase 2 planning session reads it.
+**Executor contract:** steps execute in **dependency order, not stage order** — see **[§ Dependencies & sequencing](#dependencies--sequencing)** for the DAG, the two cross-chain couplings, and the `blockedBy` map mirrored in Linear. Stage layout is a grouping, not a schedule: some Stage-A steps depend on the tooling chain (A2/A3/A6 need B1+B2) and part of the tooling chain depends on Stage A (B6 needs A2–A7). Independent steps within a wave may run in parallel worktrees; one `/phase` session drives exactly one. Mark each step done in this file; record deviations inline. Append a status note at the bottom when the phase completes — the Phase 2 planning session reads it.
 
 ## Decisions made in this planning session (interview 2026-07-05)
 
@@ -21,6 +21,164 @@ Config/state/tooling skeletons with `mark` profile · vault + `VAULT-GUIDE.md` +
 **Explicitly deferred (do not build):** status dashboard (Phase 2 per design §12 — Phase 1 only writes the state files it will render), notify layer / Telegram bot (Phase 2; guard trips surface via `mclaw doctor` + log until then), any mail-write capability (labels/archive/drafts = Phase 2), launchd scheduling (nothing in Phase 1 recurs; `mclaw install-schedules` = Phase 2), rules engine (Phase 2), triage of any kind.
 
 **Hard guarantees touched this phase:** exclusion enforcement (fully built + tested here), no-delete / no-send (readonly scopes + structural deny-list), read-only chat (structural), no autonomous recording (nothing schedulable exists this phase), no personal data in repo (hygiene test). Verification is structural per tools §12.3 — see §V below.
+
+---
+
+## Dependencies & sequencing
+
+The 24 Phase-1 step-issues do **not** execute in stage order. They form a DAG with **two cross-chain couplings** that the Stage-A / Stage-B grouping hides:
+
+1. **Tooling → credentials.** The token-minting halves of **A2 / A3 / A6** (Google, Graph, Telegram) require *working* `mclaw auth {google,graph,telegram}` helpers from **B1** plus account config from **B2**. Only the console/registration halves of those steps run independently. By contrast **A4, A5, A7** (Slack, Mattermost, Signal) have **no tooling dependency** — like A1 they use raw `security` / `curl` / `signal-cli`, so they can be done immediately, before any tooling exists (A7 is day-1 urgent: Signal history is forward-only from link time).
+2. **Credentials → tooling.** **B6** (author the real exclusions) cannot be written until every source credential exists — you enumerate the channel / folder / contact IDs you are excluding *through* A2–A7 — and B6 in turn gates all of Stage E.
+
+The critical path runs through the tooling chain — **B1 → B3/B4 → B5 → D1 → D2/D3/D4 → E\*** — so **B1/DEV-12 is the single highest-leverage unblock**. These edges are mirrored in Linear as `blockedBy` relations.
+
+### Cross-chain coupling (the part stage order hides)
+
+```mermaid
+graph LR
+  subgraph AC["Credential chain — human / console"]
+    A2[A2·DEV-6 Google]
+    A3[A3·DEV-7 Graph]
+    A4[A4·DEV-8 Slack — free]
+    A5[A5·DEV-9 Mattermost — free]
+    A6[A6·DEV-10 Telegram]
+    A7[A7·DEV-11 Signal — free, day-1]
+  end
+  subgraph TC["Tooling chain — repo PRs"]
+    B1[B1·DEV-12 CLI + auth helpers]
+    B2[B2·DEV-13 config/state]
+    B3[B3·DEV-14 exclusion gate]
+    B6[B6·DEV-17 exclusions]
+  end
+  B1 --> B2
+  B1 --> B3
+  B1 --> A2
+  B1 --> A3
+  B1 --> A6
+  B2 --> A2
+  B2 --> A3
+  B2 --> A6
+  A2 --> B6
+  A3 --> B6
+  A4 --> B6
+  A5 --> B6
+  A6 --> B6
+  A7 --> B6
+  B2 --> B6
+  B3 --> B6
+```
+
+### Full dependency DAG
+
+```mermaid
+graph LR
+  A1[A1·DEV-5 Keychain ✅]
+  A4[A4·DEV-8 Slack]
+  A5[A5·DEV-9 Mattermost]
+  A7[A7·DEV-11 Signal ⏰]
+  B1[B1·DEV-12 skeleton + CLI + auth]
+  B1 --> B2[B2·DEV-13 config/state]
+  B1 --> B3[B3·DEV-14 exclusion gate]
+  B1 --> B4[B4·DEV-15 output guard]
+  B3 --> B5[B5·DEV-16 canary]
+  B4 --> B5
+  B1 --> A2[A2·DEV-6 Google]
+  B2 --> A2
+  B1 --> A3[A3·DEV-7 Graph]
+  B2 --> A3
+  B1 --> A6[A6·DEV-10 Telegram]
+  B2 --> A6
+  B2 --> B6[B6·DEV-17 exclusions]
+  B3 --> B6
+  A2 --> B6
+  A3 --> B6
+  A4 --> B6
+  A5 --> B6
+  A6 --> B6
+  A7 --> B6
+  B1 --> C1[C1·DEV-18 vault]
+  B2 --> C1
+  B2 --> D1[D1·DEV-19 fetch base]
+  B3 --> D1
+  B5 --> D1
+  D1 --> D2[D2·DEV-20 mail]
+  A2 --> D2
+  A3 --> D2
+  D1 --> D3[D3·DEV-21 chat]
+  A4 --> D3
+  A5 --> D3
+  A6 --> D3
+  A7 --> D3
+  D1 --> D4[D4·DEV-22 drive/onedrive/local]
+  A2 --> D4
+  A3 --> D4
+  B6 --> D4
+  D2 --> E1[E1·DEV-23 email mining]
+  B4 --> E1
+  C1 --> E1
+  B6 --> E1
+  D3 --> E2[E2·DEV-24 chat backfill]
+  B4 --> E2
+  C1 --> E2
+  B6 --> E2
+  D4 --> E3[E3·DEV-25 drive docs]
+  B4 --> E3
+  C1 --> E3
+  B6 --> E3
+  D4 --> E4[E4·DEV-26 local sweep]
+  B4 --> E4
+  C1 --> E4
+  B6 --> E4
+  C1 --> E5[E5·DEV-27 life-story]
+  B4 --> E5
+  E1 --> E5
+  E1 --> F1[F1·DEV-28 phase close]
+  E2 --> F1
+  E3 --> F1
+  E4 --> F1
+  E5 --> F1
+```
+
+### `blockedBy` map (mirrored in Linear)
+
+| Step / issue | blockedBy | Notes |
+|---|---|---|
+| A1 / DEV-5 ✅ | — | done |
+| A2 / DEV-6 | B1, B2 | console half runs earlier; token flow waits on B1 |
+| A3 / DEV-7 | B1, B2 | |
+| A4 / DEV-8 | — | **independent — startable now** |
+| A5 / DEV-9 | — | **independent — startable now** |
+| A6 / DEV-10 | B1, B2 | |
+| A7 / DEV-11 | — | **independent — startable now (day-1)** |
+| B1 / DEV-12 | — | tooling root; critical path |
+| B2 / DEV-13 | B1 | |
+| B3 / DEV-14 | B1 | |
+| B4 / DEV-15 | B1 | |
+| B5 / DEV-16 | B3, B4 | |
+| B6 / DEV-17 | B2, B3, A2, A3, A4, A5, A6, A7 | needs all source IDs + gate; gates Stage E |
+| C1 / DEV-18 | B1, B2 | |
+| D1 / DEV-19 | B2, B3, B5 | canary green before writer code lands |
+| D2 / DEV-20 | D1, A2, A3 | |
+| D3 / DEV-21 | D1, A4, A5, A6, A7 | |
+| D4 / DEV-22 | D1, A2, A3, B6 | |
+| E1 / DEV-23 | D2, B4, C1, B6 | |
+| E2 / DEV-24 | D3, B4, C1, B6 | |
+| E3 / DEV-25 | D4, B4, C1, B6 | |
+| E4 / DEV-26 | D4, B4, C1, B6 | |
+| E5 / DEV-27 | C1, B4, E1 | primed by E1 seeds |
+| F1 / DEV-28 | E1, E2, E3, E4, E5 | |
+
+### Recommended execution waves (topological order)
+
+- **Wave 0 — startable now, in parallel:** B1/DEV-12 · A4/DEV-8 · A5/DEV-9 · A7/DEV-11  *(A1/DEV-5 done)*
+- **Wave 1:** B2/DEV-13 · B3/DEV-14 · B4/DEV-15
+- **Wave 2:** A2/DEV-6 · A3/DEV-7 · A6/DEV-10 · B5/DEV-16 · C1/DEV-18
+- **Wave 3:** B6/DEV-17 · D1/DEV-19
+- **Wave 4:** D2/DEV-20 · D3/DEV-21 · D4/DEV-22
+- **Wave 5:** E1/DEV-23 · E2/DEV-24 · E3/DEV-25 · E4/DEV-26
+- **Wave 6:** E5/DEV-27
+- **Wave 7:** F1/DEV-28
 
 ---
 
@@ -112,7 +270,7 @@ stat -f "%Lp" <state>/secrets/signal    # 700
 
 ### B1 — Tooling repo skeleton + `mclaw` CLI + repo-hygiene test
 **Lands:** repo only (`pyproject.toml` (uv), `mclaw_core/`, `bin/`, `prompts/`, `tests/`, `docs/`).
-**Do:** uv-managed Python project; `mclaw` CLI entry point with subcommands stubbed (`doctor`, `auth`, `exclusions`, `fetch`, `ingest`, `guard`, `secret` — `set`/`get`/`list`/`export`, wraps `security add-generic-password`/`find-generic-password`/`dump-keychain` + age encryption for `export`); `MCLAW_PROFILE` env (default `mark`) resolves config/state roots — **no personal value hardcoded anywhere**. Hygiene test `tests/hygiene/`: greps the entire repo for personal-identifier patterns; the pattern list itself is personal, so the test reads patterns from `$CONFIG/hygiene-patterns.txt` (config layer) and **skips with a loud warning** if absent (so the repo stays cloneable).
+**Do:** uv-managed Python project; `mclaw` CLI entry point. Most subcommands are stubbed this step (`doctor`, `exclusions`, `fetch`, `ingest`, `guard`), but two families ship **functional** because Stage A depends on them (see [§ Dependencies & sequencing](#dependencies--sequencing)): (1) `auth google|graph|telegram` — the real interactive OAuth / device-code / Telethon login flows that A2/A3/A6 invoke to mint token caches; (2) `secret` — `set`/`get`/`list`/`export`, wrapping `security add-generic-password`/`find-generic-password`/`dump-keychain` + age encryption for `export`. *(If `auth` is large enough to warrant its own PR, carve it into a follow-on issue and note the split here — but it is a B1-chain deliverable, not a Stage-A one, and A2/A3/A6 are `blockedBy` it.)* `MCLAW_PROFILE` env (default `mark`) resolves config/state roots — **no personal value hardcoded anywhere**. Hygiene test `tests/hygiene/`: greps the entire repo for personal-identifier patterns; the pattern list itself is personal, so the test reads patterns from `$CONFIG/hygiene-patterns.txt` (config layer) and **skips with a loud warning** if absent (so the repo stays cloneable).
 **Dependency guard:** `pyproject.toml` contains no agent-framework packages (tools §12); test asserts the dependency list against a deny-list (`openclaw*, zeroclaw*, ironclaw*, picoclaw*, nemoclaw*, hermes*, vellum*`).
 **Accept:**
 ```
