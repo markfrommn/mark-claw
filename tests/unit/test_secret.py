@@ -207,13 +207,30 @@ def test_list_accounts_fails_closed_on_unreachable_keychain(monkeypatch) -> None
         secret.list_accounts(profile="mark")
 
 
-def test_list_accounts_parses_when_records_printed_despite_nonzero(monkeypatch) -> None:
-    # Non-zero exit but records WERE printed → parse what we got (intended).
+def test_list_accounts_fails_closed_on_any_nonzero(monkeypatch) -> None:
+    # dump-keychain returns 0 on success; ANY non-zero means enumeration failed,
+    # even if some records were printed. Fail closed rather than risk an
+    # incomplete backup.
     def fake_run(argv, text=None, capture_output=None):
         return SimpleNamespace(returncode=1, stdout=DUMP_SAMPLE, stderr="partial")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    assert secret.list_accounts(profile="mark") == ["google-token", "slack-xoxp"]
+    with pytest.raises(secret.SecretError, match="enumeration failed"):
+        secret.list_accounts(profile="mark")
+
+
+def test_build_secret_payload_propagates_read_failure(monkeypatch) -> None:
+    # A single unreadable item must abort the export, not be silently omitted.
+    monkeypatch.setattr(secret, "list_accounts", lambda *, profile: ["a-b", "c-d"])
+
+    def flaky_get(service, account):
+        if account == "c-d":
+            raise secret.SecretError("item c-d unreadable")
+        return "val"
+
+    monkeypatch.setattr(secret, "_get_by_account", flaky_get)
+    with pytest.raises(secret.SecretError, match="unreadable"):
+        secret.build_secret_payload(profile="mark")
 
 
 def test_age_argv_recipient_and_passphrase_modes() -> None:

@@ -204,12 +204,12 @@ def list_accounts(*, profile: str) -> list[str]:
         proc = subprocess.run(_dump_argv(), text=True, capture_output=True)
     except FileNotFoundError as exc:  # pragma: no cover - security is built-in
         raise SecretError(f"`{SECURITY}` not found on PATH") from exc
-    # dump-keychain returns non-zero on some locked/foreign keychains but still
-    # prints the accessible records to stdout; parse whatever we got. But a
-    # non-zero exit with EMPTY stdout means enumeration actually failed (locked /
-    # unreachable keychain) — fail closed rather than report an empty set, which
-    # would let export_backup silently write a backup with no secrets.
-    if proc.returncode != 0 and not proc.stdout.strip():
+    # dump-keychain returns 0 on success (it enumerates the unlocked login
+    # keychain). Any non-zero exit means enumeration failed (locked / unreachable
+    # keychain), so fail closed: returning a partial or empty set here would let
+    # export_backup silently write a backup that omits credentials while claiming
+    # to hold the "full credential set."
+    if proc.returncode != 0:
         raise SecretError(
             f"keychain enumeration failed for {service}: {proc.stderr.strip()}"
         )
@@ -226,10 +226,10 @@ def build_secret_payload(*, profile: str) -> str:
     service = service_name(profile)
     payload: dict[str, str] = {}
     for account in list_accounts(profile=profile):
-        try:
-            payload[account] = _get_by_account(service, account)
-        except SecretError:
-            continue
+        # Propagate a read failure: a single unreadable item must abort the
+        # export, not be silently omitted from a backup that promises the full
+        # credential set.
+        payload[account] = _get_by_account(service, account)
     return json.dumps({"service": service, "secrets": payload}, indent=2)
 
 

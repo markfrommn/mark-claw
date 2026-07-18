@@ -56,8 +56,21 @@ EXEMPT_PREFIXES: tuple[str, ...] = (
 
 
 def is_exempt(path: str) -> bool:
-    """Return True if ``path`` is in the exempt (non-scanned) set."""
-    return any(path.startswith(prefix) for prefix in EXEMPT_PREFIXES)
+    """Return True if ``path`` is in the exempt (non-scanned) set.
+
+    Directory entries (ending in ``/``) match by prefix (their whole subtree);
+    bare-filename entries match **exactly**. Exact-matching the bare files is
+    what keeps the canary honest: a prefix match would also exempt e.g.
+    ``AGENTS.md.bak`` or ``.cwft-settings.yaml.old``, silently dropping real
+    files from the personal-data scan.
+    """
+    for prefix in EXEMPT_PREFIXES:
+        if prefix.endswith("/"):
+            if path.startswith(prefix):
+                return True
+        elif path == prefix:
+            return True
+    return False
 
 
 def find_violations(
@@ -151,10 +164,30 @@ def test_exempt_prefixes_cover_cwft_surface() -> None:
         "GEMINI.md",
     ):
         assert expected in EXEMPT_PREFIXES
+    # Every directory entry ends in '/'; no bare-file entry does.
+    for entry in EXEMPT_PREFIXES:
+        is_dir_entry = entry.endswith("/")
+        is_bare_file = entry in {
+            ".cwft-settings.yaml",
+            ".cwft-ai-manifest.json",
+            "AGENTS.md",
+            "GEMINI.md",
+        }
+        assert is_dir_entry ^ is_bare_file  # exactly one, never both
+
+    # Real exempt paths still match.
     assert is_exempt(".claude/agents/common-developer.md")
     assert is_exempt(".cwft-settings.yaml")
+    assert is_exempt("AGENTS.md")
     assert is_exempt("specs/plans/PHASE-1-PLAN.md")
     assert not is_exempt("mclaw_core/paths.py")
+
+    # Bare-filename entries must match EXACTLY, not by prefix — a ".bak"/".old"
+    # sibling is NOT exempt and stays in the personal-data scan.
+    assert not is_exempt("AGENTS.md.bak")
+    assert not is_exempt(".cwft-settings.yaml.old")
+    assert not is_exempt("GEMINI.md.bak")
+    assert not is_exempt(".cwft-ai-manifest.json.tmp")
 
 
 # Neutral placeholder tokens for the injected-content tests. These stand in for
