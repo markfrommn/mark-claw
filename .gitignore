@@ -18,6 +18,7 @@ htmlcov/
 
 # local scratch — reference material, not tracked
 /raw/
+/tests/canary/tmp/
 
 #BEGIN cwft
 .cwft-settings-local.yaml

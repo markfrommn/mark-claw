@@ -10,6 +10,7 @@ tracked in DEV-31.
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -30,6 +31,9 @@ _STUBS: dict[str, str] = {
 }
 
 _AUTH_PROVIDERS = ("google", "graph", "telegram")
+
+# Absolute so ``mclaw test --canary`` works from an operator's preferred cwd.
+_CANARY_TEST_DIR = Path(__file__).resolve().parents[1] / "tests" / "canary"
 
 
 def _print_stub(command: str, *, tracked: str | None = None) -> int:
@@ -112,6 +116,16 @@ def cmd_guard(args: argparse.Namespace) -> int:
     if getattr(args, "guard_cmd", None) == "scan-vault":
         return _cmd_guard_scan_vault(paths.resolve_profile())
     return _print_stub("guard")
+
+
+def cmd_test(args: argparse.Namespace) -> int:
+    """Run explicit test suites exposed as stable operator/CI commands."""
+    if getattr(args, "canary", False):
+        completed = subprocess.run(
+            [sys.executable, "-m", "pytest", str(_CANARY_TEST_DIR)], check=False
+        )
+        return completed.returncode
+    return _print_stub("test")
 
 
 def _cmd_guard_scan_vault(profile: str) -> int:
@@ -301,6 +315,14 @@ def build_parser() -> argparse.ArgumentParser:
     _build_secret_parser(sub)
 
     _build_guard_parser(sub)
+
+    test = sub.add_parser("test", help="run Mark-Claw test suites")
+    test.add_argument(
+        "--canary",
+        action="store_true",
+        help="run the exclusion zero-leak integration canary",
+    )
+    test.set_defaults(func=cmd_test)
 
     for name, help_text in _STUBS.items():
         stub = sub.add_parser(name, help=f"{help_text} (stub)")
