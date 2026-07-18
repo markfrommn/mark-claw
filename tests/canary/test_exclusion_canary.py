@@ -98,18 +98,21 @@ def _write_fixture_config(config_root: Path, vault: Path, *, sentinel: str) -> N
     )
 
 
-def _assert_no_sentinel(output_root: Path, sentinel: str) -> None:
-    """Verify normal output and non-quarantine state records are sentinel-free.
+def _assert_no_sentinel(sentinel: str, *persistence_roots: Path) -> None:
+    """Verify every normal output/state persistence surface is sentinel-free.
 
-    Quarantine is deliberately excluded: §5.4 preserves the rejected artifact
-    there for human review. The caller asserts its secure location and ensures
-    its changelog/review records contain no artifact content separately.
+    ``state/quarantine`` is the sole, sanctioned §5.4 exception: it preserves
+    a rejected artifact for human review outside vault/sync. The caller checks
+    that exception's secure modes/location and scans its changelog/review
+    records separately, where matched content must never appear.
     """
-    leaked = [
-        path.relative_to(output_root)
-        for path in output_root.rglob("*")
-        if path.is_file() and sentinel in path.read_text(encoding="utf-8")
-    ]
+    leaked: list[Path] = []
+    for root in persistence_roots:
+        leaked.extend(
+            path
+            for path in root.rglob("*")
+            if path.is_file() and sentinel in path.read_text(encoding="utf-8")
+        )
     if leaked:
         raise CanaryLeakError(f"canary sentinel reached output: {leaked}")
 
@@ -125,11 +128,10 @@ def _run_current_phase_one_pipelines(
     """
     config_root = paths.config_root(CANARY_PROFILE)
     state_root = paths.state_root(CANARY_PROFILE)
-    output_root = root / "output"
-    vault = output_root / "vault"
-    spool = output_root / "spool"
-    logs = output_root / "logs"
-    runs = output_root / "runs"
+    vault = root / "output" / "vault"
+    spool = state_root / "spool"
+    logs = state_root / "logs"
+    runs = state_root / "runs"
     ephemeral = state_root / "spool" / "ephemeral"
     for directory in (vault, spool, logs, runs, ephemeral):
         directory.mkdir(parents=True, exist_ok=True)
@@ -202,7 +204,15 @@ def _run_current_phase_one_pipelines(
         (runs / "run.json").write_text('{"blocked_skipped": 2}\n')
 
     assert not any(ephemeral.iterdir()), "ephemeral content survived its sweep"
-    _assert_no_sentinel(output_root, sentinel)
+    _assert_no_sentinel(
+        sentinel,
+        vault,
+        spool,
+        logs,
+        runs,
+        state_root / "changelog",
+        state_root / "review-queue",
+    )
 
     quarantine_dir = state_root / "quarantine"
     assert quarantine_dir.is_dir()
