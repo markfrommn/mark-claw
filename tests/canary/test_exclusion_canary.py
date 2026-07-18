@@ -20,7 +20,7 @@ import yaml
 
 from mclaw_core import paths
 from mclaw_core.exclusion import ChatRef, Decision, DriveRef, ExclusionGate
-from mclaw_core.output_guard import OutputGuard, Surface, Trip
+from mclaw_core.output_guard import Clean, OutputGuard, Surface, Trip
 
 CANARY_ROOT = Path(__file__).parent
 TMP_ROOT = CANARY_ROOT / "tmp"
@@ -41,6 +41,14 @@ class FixtureItem:
     tier: Decision
 
 
+@dataclass(frozen=True)
+class CanaryFixture:
+    """The isolated profile and unique sentinel for one canary invocation."""
+
+    root: Path
+    sentinel: str
+
+
 class MockProvider:
     """Provider double that makes a blocked content fetch an immediate failure."""
 
@@ -55,20 +63,24 @@ class MockProvider:
         return self.item.content
 
 
-def _write_fixture_config(config_root: Path, vault: Path) -> None:
+def _write_fixture_config(config_root: Path, vault: Path, *, sentinel: str) -> None:
+    """Seed every blocked fixture identifier with the invocation's sentinel."""
+    blocked_channel = f"CANARY-BLOCKED-CHANNEL-{sentinel}"
+    blocked_contact = f"CANARY-EPHEMERAL-CONTACT-{sentinel}"
+    blocked_folder = f"/canary/{sentinel}/blocked-folder"
     config_root.mkdir(parents=True)
     (config_root / "exclusions.yaml").write_text(
         yaml.safe_dump(
             {
                 "chat": {
                     "canary-chat": [
-                        {"id": "CANARY-BLOCKED-CHANNEL", "tier": "blocked"},
-                        {"id": "CANARY-EPHEMERAL-CONTACT", "tier": "ephemeral"},
+                        {"id": blocked_channel, "tier": "blocked"},
+                        {"id": blocked_contact, "tier": "ephemeral"},
                     ]
                 },
                 "drive": {
                     "canary-drive": [
-                        {"path": "/canary/blocked-folder", "tier": "blocked"}
+                        {"path": blocked_folder, "tier": "blocked"}
                     ]
                 },
                 "meetings": [],
@@ -86,17 +98,16 @@ def _write_fixture_config(config_root: Path, vault: Path) -> None:
     )
 
 
-def _assert_no_sentinel(fixture_root: Path, sentinel: str) -> None:
-    """Verify every emitted fixture surface is sentinel-free.
+def _assert_no_sentinel(output_root: Path, sentinel: str) -> None:
+    """Verify normal output and non-quarantine state records are sentinel-free.
 
-    The fixture root includes output spool/vault/logs/run records and the
-    XDG state tree (ephemeral spool, quarantine, changelog, and state logs).
-    Config is also harmless to scan and makes this a stronger whole-tree
-    assertion without exposing any user profile path.
+    Quarantine is deliberately excluded: §5.4 preserves the rejected artifact
+    there for human review. The caller asserts its secure location and ensures
+    its changelog/review records contain no artifact content separately.
     """
     leaked = [
-        path.relative_to(fixture_root)
-        for path in fixture_root.rglob("*")
+        path.relative_to(output_root)
+        for path in output_root.rglob("*")
         if path.is_file() and sentinel in path.read_text(encoding="utf-8")
     ]
     if leaked:
@@ -124,29 +135,42 @@ def _run_current_phase_one_pipelines(
         directory.mkdir(parents=True, exist_ok=True)
 
     guard = OutputGuard(config_root=config_root, state_root=state_root)
+    blocked_channel = f"CANARY-BLOCKED-CHANNEL-{sentinel}"
+    blocked_contact = f"CANARY-EPHEMERAL-CONTACT-{sentinel}"
+    blocked_folder = f"/canary/{sentinel}/blocked-folder"
     providers = (
         MockProvider(
             FixtureItem(
                 "canary-chat",
-                ChatRef(id="CANARY-BLOCKED-CHANNEL"),
-                f"chat content {sentinel}",
+                ChatRef(id=blocked_channel),
+                f"chat content from {blocked_channel}",
                 Decision.BLOCKED,
             )
         ),
         MockProvider(
             FixtureItem(
                 "canary-drive",
-                DriveRef(path="/canary/blocked-folder/document"),
-                f"folder content {sentinel}",
+                DriveRef(path=f"{blocked_folder}/document"),
+                f"folder content from {blocked_folder}",
                 Decision.BLOCKED,
             )
         ),
         MockProvider(
             FixtureItem(
                 "canary-chat",
-                ChatRef(id="CANARY-EPHEMERAL-CONTACT"),
-                f"ephemeral content {sentinel}",
+                ChatRef(id=blocked_contact),
+                f"ephemeral content from {blocked_contact}",
                 Decision.EPHEMERAL,
+            )
+        ),
+        MockProvider(
+            FixtureItem(
+                "canary-chat",
+                ChatRef(id="CANARY-ALLOWED"),
+                # Deliberate writer-side drill: this allowed item carries a
+                # blocked identifier and must be stopped by OutputGuard.
+                f"allowed item repeats blocked identifier {blocked_channel}",
+                Decision.ALLOW,
             )
         ),
     )
@@ -160,6 +184,7 @@ def _run_current_phase_one_pipelines(
             transient = ephemeral / "during-sweep.jsonl"
             transient.write_text(content, encoding="utf-8")
             # The only permitted ephemeral persistence is within the sweep.
+            assert transient.read_text(encoding="utf-8") == content
             transient.unlink()
             continue
         for destination in (spool / "items.jsonl", vault / "note.md"):
@@ -177,37 +202,73 @@ def _run_current_phase_one_pipelines(
         (runs / "run.json").write_text('{"blocked_skipped": 2}\n')
 
     assert not any(ephemeral.iterdir()), "ephemeral content survived its sweep"
-    _assert_no_sentinel(root, sentinel)
+    _assert_no_sentinel(output_root, sentinel)
+
+    quarantine_dir = state_root / "quarantine"
+    assert quarantine_dir.is_dir()
+    assert quarantine_dir.stat().st_mode & 0o777 == 0o700
+    quarantined = list(quarantine_dir.iterdir())
+    assert quarantined, "allowed artifact containing a blocked ID did not trip guard"
+    for artifact in quarantined:
+        assert artifact.parent == quarantine_dir
+        assert artifact.stat().st_mode & 0o777 == 0o600
+        assert sentinel in artifact.read_text(encoding="utf-8")
+    for record_dir in (state_root / "changelog", state_root / "review-queue"):
+        for record in record_dir.rglob("*"):
+            if record.is_file():
+                assert sentinel not in record.read_text(encoding="utf-8")
 
 
 @pytest.fixture
-def canary_root(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+def canary_fixture(monkeypatch: pytest.MonkeyPatch) -> Iterator[CanaryFixture]:
     """A clean, repo-local fixture profile; never touch user config or state."""
     shutil.rmtree(TMP_ROOT, ignore_errors=True)
     monkeypatch.setenv("MCLAW_PROFILE", CANARY_PROFILE)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(TMP_ROOT / "config"))
     monkeypatch.setenv("XDG_STATE_HOME", str(TMP_ROOT / "state"))
-    _write_fixture_config(paths.config_root(), TMP_ROOT / "output" / "vault")
-    yield TMP_ROOT
+    sentinel = f"MCX-CANARY-{uuid.uuid4()}"
+    _write_fixture_config(
+        paths.config_root(), TMP_ROOT / "output" / "vault", sentinel=sentinel
+    )
+    yield CanaryFixture(root=TMP_ROOT, sentinel=sentinel)
     shutil.rmtree(TMP_ROOT, ignore_errors=True)
 
 
 def test_canary_blocks_channel_folder_and_contact_without_output_leak(
-    canary_root: Path,
+    canary_fixture: CanaryFixture,
 ) -> None:
-    sentinel = f"MCX-CANARY-{uuid.uuid4()}"
     gate = ExclusionGate.load(paths.config_root())
 
-    _run_current_phase_one_pipelines(root=canary_root, sentinel=sentinel, gate=gate)
+    _run_current_phase_one_pipelines(
+        root=canary_fixture.root, sentinel=canary_fixture.sentinel, gate=gate
+    )
 
 
 def test_canary_fails_when_gate_is_mutated_to_always_allow(
-    canary_root: Path, monkeypatch: pytest.MonkeyPatch
+    canary_fixture: CanaryFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Controlled mutation test: proves the canary catches an always-ALLOW gate."""
-    sentinel = f"MCX-CANARY-{uuid.uuid4()}"
     gate = ExclusionGate.load(paths.config_root())
     monkeypatch.setattr(gate, "check", lambda _source, _ref: Decision.ALLOW)
 
     with pytest.raises(CanaryLeakError, match="blocked fixture content was fetched"):
-        _run_current_phase_one_pipelines(root=canary_root, sentinel=sentinel, gate=gate)
+        _run_current_phase_one_pipelines(
+            root=canary_fixture.root,
+            sentinel=canary_fixture.sentinel,
+            gate=gate,
+        )
+
+
+def test_canary_fails_when_output_guard_is_bypassed(
+    canary_fixture: CanaryFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Controlled mutation test: a writer that skips the guard leaks visibly."""
+    gate = ExclusionGate.load(paths.config_root())
+    monkeypatch.setattr(OutputGuard, "scan", lambda *_args, **_kwargs: Clean())
+
+    with pytest.raises(CanaryLeakError, match="canary sentinel reached output"):
+        _run_current_phase_one_pipelines(
+            root=canary_fixture.root,
+            sentinel=canary_fixture.sentinel,
+            gate=gate,
+        )
