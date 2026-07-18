@@ -150,7 +150,20 @@ class _Pattern:
 
 
 def _compile_token_pattern(identifier: str) -> re.Pattern[str]:
-    """Compile a case-insensitive word-bounded regex for a token identifier.
+    """Compile a word-bounded token regex; match against casefolded scan text.
+
+    The identifier is :meth:`str.casefold`-ed at compile time and the regex is
+    **not** ``re.IGNORECASE`` — :meth:`OutputGuard.scan` searches the
+    casefolded artifact text, so the casefold happens exactly once per scan
+    rather than once per pattern, and the casefold semantics match the fetch
+    gate's chat ``name`` / ``also_match`` matching (the gate compiles
+    ``name.casefold()`` and compares against ``ref.name.casefold()`` in
+    :meth:`mclaw_core.exclusion.ExclusionGate._check_chat`). Casefold, not
+    ``re.IGNORECASE`` (Unicode simple-case-folding), is what equates ``ß``↔
+    ``ss`` — the two diverge, so an excluded chat named ``Straße`` would trip
+    the gate on artifact text ``STRASSE`` but pass the guard under
+    ``re.IGNORECASE``. The guard's casing semantics must agree with the gate's
+    (§5.4 defense-in-depth); casefold parity closes that gap.
 
     The boundary is ``(?<!\\w)`` / ``(?!\\w)`` (no word char adjacent on either
     side) rather than ``\\b`` so identifiers that themselves start or end with a
@@ -159,7 +172,9 @@ def _compile_token_pattern(identifier: str) -> re.Pattern[str]:
     ``\\w``↔``\\W`` transition at the boundary position, so it silently fails
     to match ``#foo`` at the start of a line (no transition between
     start-of-string and ``#``). The lookarounds apply to whatever is *outside*
-    the identifier and work in all positions.
+    the identifier and work in all positions; ``\\w``-ness is preserved under
+    casefold (the casefold of a word char is a word char), so a pattern
+    anchored once against the casefolded text still anchors correctly.
 
     Examples anchored correctly:
 
@@ -168,11 +183,11 @@ def _compile_token_pattern(identifier: str) -> re.Pattern[str]:
     * ``#people-private`` matches at the start of a line and after whitespace.
     * ``abc123`` (a meeting series id) matches as a whole token.
     """
-    return re.compile(rf"(?<!\w){re.escape(identifier)}(?!\w)", re.IGNORECASE)
+    return re.compile(rf"(?<!\w){re.escape(identifier.casefold())}(?!\w)")
 
 
 def _compile_substring_pattern(identifier: str) -> re.Pattern[str]:
-    """Compile a case-insensitive substring regex for a free-text-span identifier.
+    """Compile a substring regex for free-text spans; match casefolded scan text.
 
     Used for two identifier kinds that appear in artifact text as contiguous
     substrings rather than as whole tokens:
@@ -190,17 +205,26 @@ def _compile_substring_pattern(identifier: str) -> re.Pattern[str]:
       compile here would let ``Comp reviews Q3`` through (trailing ``s``
       defeats ``(?!\\w)``) even though the gate blocked it.
 
-    Trailing slashes are stripped before escaping so a configured ``/HR/``
-    matches text ``"see /HR"`` (no trailing slash) — the gate normalizes the
-    same way. Substring is broader than token match and therefore fail-closed
-    (more quarantine, no leak).
+    Like :func:`_compile_token_pattern`, the identifier is casefolded at
+    compile time and the regex is **not** ``re.IGNORECASE`` —
+    :meth:`OutputGuard.scan` searches the casefolded artifact text. The gate's
+    meeting title fallback uses :meth:`str.casefold` containment (see
+    :meth:`mclaw_core.exclusion.ExclusionGate._check_meeting`), so casefold
+    parity keeps the two layers in agreement on Unicode identifiers where
+    ``re.IGNORECASE`` (simple case-folding) would diverge from full casefold.
+
+    Trailing slashes are stripped before escaping (and before casefold) so a
+    configured ``/HR/`` matches text ``"see /HR"`` (no trailing slash) — the
+    gate normalizes the same way. Substring is broader than token match and
+    therefore fail-closed (more quarantine, no leak).
     """
     # ``rstrip("/") or identifier`` keeps a sole-"/" path from collapsing to
     # the empty string (which would match everything); it is an extreme edge
     # case but the guard must not silently match all text on a degenerate
-    # config value.
-    normalized = identifier.rstrip("/") or identifier
-    return re.compile(re.escape(normalized), re.IGNORECASE)
+    # config value. Casefold applied after the trailing-slash normalization so
+    # the pattern matches the casefolded scan text (see OutputGuard.scan).
+    normalized = (identifier.rstrip("/") or identifier).casefold()
+    return re.compile(re.escape(normalized))
 
 
 def _slugify(name: str) -> str:
@@ -589,8 +613,18 @@ class OutputGuard:
                 f"unknown surface {surface!r} "
                 "(expected Surface.PERSISTENCE or Surface.ALERT_LOG)"
             )
+        # Casefold the scan text exactly once and match every pattern against
+        # the casefolded form. The compiled patterns are themselves casefolded
+        # (see :func:`_compile_token_pattern` / :func:`_compile_substring_pattern`);
+        # matching casefolded-pattern against casefolded-text reproduces the
+        # fetch gate's :meth:`str.casefold` semantics for chat ``name`` /
+        # ``also_match`` and meeting ``title`` (§5.4 defense-in-depth). This
+        # closes the ``ß``↔``SS`` gap that ``re.IGNORECASE`` (Unicode simple
+        # case-folding) leaves open. ``artifact_name`` is matched-text-agnostic
+        # by contract, so it is not casefolded.
+        text_cf = text.casefold()
         for pat in patterns:
-            if pat.regex.search(text):
+            if pat.regex.search(text_cf):
                 return Trip(pattern_id=pat.pattern_id, artifact_name=artifact_name)
         return Clean()
 

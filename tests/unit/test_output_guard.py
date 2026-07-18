@@ -233,6 +233,91 @@ def test_case_insensitive_match(tmp_path: Path) -> None:
     assert isinstance(result, Trip)
 
 
+# --- casefold parity with the fetch gate -----------------------------------
+#
+# The fetch gate matches chat ``name`` / ``also_match`` and meeting ``title``
+# via :meth:`str.casefold` (see ``mclaw_core.exclusion``). Casefold equates
+# characters that ``re.IGNORECASE`` (Unicode simple case-folding) does NOT —
+# the canonical example is German ``ß`` ↔ ``SS``. Before the casefold-parity
+# fix, the guard compiled patterns with ``re.IGNORECASE`` and would return
+# ``Clean`` for artifact text ``STRASSE`` against an excluded chat named
+# ``Straße``, even though the gate blocks the same identifier at enumeration.
+# The guard's casing semantics must agree with the gate's (§5.4
+# defense-in-depth). These tests pin that parity.
+
+
+def test_casefold_parity_sSharfS_matches_ss(tmp_path: Path) -> None:
+    """An excluded chat named ``Straße`` trips the guard on artifact text ``STRASSE``.
+
+    This is the ß↔SS case ``re.IGNORECASE`` misses: simple case-folding keeps
+    ``ß`` as a single codepoint and does not equate it to the two-codepoint
+    ``ss``. Full :meth:`str.casefold` does (``"ß".casefold() == "ss"``), so the
+    guard's casefold-both-sides scan must catch the uppercase artifact text
+    that the gate would also block.
+    """
+    guard = _guard_with(
+        tmp_path,
+        exclusions={
+            "chat": {
+                "slack-work": [
+                    {"name": "Straße", "tier": "blocked"},
+                ]
+            }
+        },
+    )
+    result = guard.scan(
+        "see the STRASSE channel for details", surface=Surface.PERSISTENCE
+    )
+    assert isinstance(result, Trip), (
+        "casefold (not re.IGNORECASE) must catch ß↔SS — the gate blocks this "
+        "identifier, so the guard must too"
+    )
+    assert "Straße" in result.pattern_id
+
+
+def test_casefold_parity_clean_ascii_still_clean(tmp_path: Path) -> None:
+    """The converse: an unrelated ASCII artifact with no denied identifier
+    returns :class:`Clean`. Guards against the casefold fix becoming an
+    over-broad match-everything regression (casefold is non-trivial on some
+    Unicode classes; this pins the clean baseline)."""
+    guard = _guard_with(
+        tmp_path,
+        exclusions={
+            "chat": {
+                "slack-work": [
+                    {"name": "Straße", "tier": "blocked"},
+                ]
+            }
+        },
+    )
+    result = guard.scan(
+        "standup notes: shipped the onboarding flow, no blockers",
+        surface=Surface.PERSISTENCE,
+    )
+    assert isinstance(result, Clean)
+
+
+def test_casefold_parity_ascii_behaviour_unchanged(tmp_path: Path) -> None:
+    """Casefold == lower for ASCII, so the canonical ASCII fixture must keep
+    behaving exactly as before the casefold-parity fix: an upper-case
+    occurrence of the blocked id still trips, and a clean text still cleans.
+
+    This is the explicit assertion that the existing ASCII suite stays green
+    on purpose (casefold is a strict superset of lower over ASCII), not by
+    accident — the ß↔SS fix must not perturb ASCII matching.
+    """
+    guard = _guard_with(tmp_path, exclusions=_two_tier_chat_exclusions())
+    # Upper-case occurrence trips (casefold of "C0HRCHAN" is "c0hrchan";
+    # casefold of the upper-case scan text is the same lower-case form).
+    assert isinstance(
+        guard.scan(f"see {_BLOCKED_ID} now", surface=Surface.PERSISTENCE), Trip
+    )
+    # Unrelated ASCII text is still clean.
+    assert isinstance(
+        guard.scan("nothing to see here", surface=Surface.PERSISTENCE), Clean
+    )
+
+
 def test_word_boundary_no_substring_false_positive(tmp_path: Path) -> None:
     """``C0HRCHAN`` must not match ``C0HRCHANX`` (a different id).
 

@@ -145,7 +145,22 @@ def _cmd_guard_scan_vault(profile: str) -> int:
 
     findings: list[output_guard.Trip] = []
     unreadable: list[str] = []
-    for note_path in sorted(vault.rglob("*.md")):
+    # The directory traversal itself can raise ``OSError`` (an unreadable
+    # subdir, a broken symlink on a dir entry, a permissions flip mid-scan).
+    # Left unhandled that surfaces as an uncaught traceback; the scan-vault
+    # contract already distinguishes 0-findings=exit-0 from failure=exit-1,
+    # and "cannot enumerate the vault" is a failure of the same class as the
+    # per-note unreadable-skip below — record it, print the incomplete-scan
+    # warning, and exit nonzero rather than crashing.
+    try:
+        note_iter = sorted(vault.rglob("*.md"))
+    except OSError as exc:
+        print(
+            f"mclaw guard scan-vault: cannot enumerate vault: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    for note_path in note_iter:
         try:
             text = note_path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:

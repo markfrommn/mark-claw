@@ -598,6 +598,45 @@ def test_guard_scan_vault_construction_failure_exits_nonzero(
     assert "cannot compile guard" in err
 
 
+def test_guard_scan_vault_enumeration_error_exits_nonzero(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    """``guard scan-vault`` handles a vault-traversal ``OSError`` without a traceback.
+
+    The ``vault.rglob("*.md")`` enumeration is outside the per-note
+    ``read_text`` try/except. If the traversal itself hits a filesystem error
+    (an unreadable subdir, a broken symlink on a directory entry, a permissions
+    flip mid-scan), the loop raises ``OSError`` and — left unhandled — surfaces
+    as an uncaught traceback. The scan-vault contract already distinguishes
+    0-findings=exit-0 from failure=exit-1; "cannot enumerate the vault" is a
+    failure of the same class as the per-note unreadable-skip path and must
+    surface as a clean stderr message + exit 1, not a crash.
+
+    Patching ``Path.rglob`` to raise is the portable way to exercise this:
+    exercising it via a real unreadable subdir is brittle under root and across
+    filesystems, and the contract under test is "an OSError from enumeration is
+    handled", whatever its cause.
+    """
+    cfg, _ = _xdg(monkeypatch, tmp_path)
+    _stub_keychain_reachable(monkeypatch)
+    cli.main(["doctor", "--init"])  # skeleton config + state
+    capsys.readouterr()
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    _write_valid_settings(cfg / "mark-claw" / "mark" / "settings.yaml", str(vault))
+
+    def boom(self, pattern):
+        raise OSError("simulated traversal failure")
+
+    monkeypatch.setattr(Path, "rglob", boom)
+    rc = cli.main(["guard", "scan-vault"])
+    err = capsys.readouterr().err
+    assert rc == 1, "an enumeration failure must exit nonzero, not crash"
+    assert "cannot enumerate vault" in err
+    assert "simulated traversal failure" in err
+
+
 def test_secret_get_dispatches(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         "mclaw_core.secret.get_secret",
