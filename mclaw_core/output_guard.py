@@ -103,9 +103,10 @@ class Clean:
 class Trip:
     """Scan result: the artifact tripped the guard — do NOT emit it.
 
-    Carries only :attr:`pattern_id` (a stable string constructed from the
-    matching exclusion entry's source and identifier — never the matched
-    content) and :attr:`artifact_name` (the logical name the caller passed to
+    Carries only :attr:`pattern_id` (an opaque, entry-level structural id of
+    the form ``{source}#{entry_index}`` — never the matched content and never
+    the blocked identifier value; see :class:`_Pattern`) and
+    :attr:`artifact_name` (the logical name the caller passed to
     :meth:`OutputGuard.scan`). The matched text itself is deliberately absent:
     §5.4 forbids logging matched content, and a Trip is what gets logged.
     """
@@ -132,11 +133,17 @@ class OutputGuardError(Exception):
 class _Pattern:
     """One compiled deny-pattern with the metadata a Trip needs.
 
-    :attr:`pattern_id` is a stable, human-readable string constructed from the
-    entry's source + identifier (e.g. ``chat:slack-work[id=C0HRCHAN]``). It
-    surfaces in the Trip, changelog, and review-queue so the operator can
-    trace a trip back to the exact ``exclusions.yaml`` entry. It carries
-    config-side identifiers only — never the matched text from the artifact.
+    :attr:`pattern_id` is an **opaque, entry-level structural id** —
+    ``f"{source}#{entry_index}"`` (e.g. ``chat#0``, ``drive#3``,
+    ``meetings#1``) — carrying only the entry's 0-based position within its
+    source section, never the blocked identifier value. It surfaces in the
+    Trip, the changelog, the review-queue item, and ``mclaw guard scan-vault``
+    output; because §11.1 forbids a blocked source appearing in *any* output,
+    log, or vault artifact, the identifier value (chat id/name/alias, drive
+    path, meeting series-id/title) must not be embedded in the id. The
+    operator correlates ``chat#N`` back to ``exclusions.yaml`` by position and
+    reads the quarantined artifact for content. All patterns derived from one
+    entry share its single opaque id.
 
     :attr:`tier` is the spec's tier vocabulary (``"blocked"`` / ``"ephemeral"``)
     and selects which surface set the pattern belongs to (blocked → both
@@ -305,6 +312,19 @@ def _compile_chat_into(
             "(a present section must be a mapping; remove the key if unused)"
         )
     chat_map = _as_mapping(raw, context="exclusions.yaml: chat")
+    # Opaque entry-level pattern_id (§5.4 / §11.1): the id carries NO
+    # identifier value — only the entry's 0-based position within its source
+    # section (here: the whole ``chat:`` mapping, counted across every
+    # source-id). A blocked identifier that appears in the id would leak into
+    # the Trip, the changelog ``guard.trip`` record, the review-queue item,
+    # and ``mclaw guard scan-vault`` output — exactly the §11.1 "appears in
+    # no output, log, or vault artifact" violation. The operator correlates
+    # ``chat#N`` back to ``exclusions.yaml`` by position and reads the
+    # quarantined artifact for content; the value never leaves config + the
+    # quarantine file. ``entry_index`` is advanced once per entry (not per
+    # pattern), so every pattern derived from one entry — its id, name, and
+    # each ``also_match`` alias — shares the single opaque id.
+    entry_index = 0
     for source_id, entries_raw in chat_map.items():
         ctx = f"exclusions.yaml: chat[{source_id!r}]"
         if entries_raw is None:
@@ -329,10 +349,11 @@ def _compile_chat_into(
                     f"{entry_ctx}: entry has no identifiers "
                     "(need at least one of id, name, also_match)"
                 )
+            pattern_id = f"chat#{entry_index}"
             if entry_id is not None:
                 add(
                     _Pattern(
-                        pattern_id=f"chat:{source_id}[id={entry_id}]",
+                        pattern_id=pattern_id,
                         tier=tier,
                         regex=_compile_token_pattern(entry_id),
                     )
@@ -340,7 +361,7 @@ def _compile_chat_into(
             if name is not None:
                 add(
                     _Pattern(
-                        pattern_id=f"chat:{source_id}[name={name}]",
+                        pattern_id=pattern_id,
                         tier=tier,
                         regex=_compile_token_pattern(name),
                     )
@@ -348,11 +369,12 @@ def _compile_chat_into(
             for alias in aliases:
                 add(
                     _Pattern(
-                        pattern_id=f"chat:{source_id}[also_match={alias}]",
+                        pattern_id=pattern_id,
                         tier=tier,
                         regex=_compile_token_pattern(alias),
                     )
                 )
+            entry_index += 1
 
 
 def _compile_drive_into(
@@ -373,6 +395,12 @@ def _compile_drive_into(
             "(a present section must be a mapping; remove the key if unused)"
         )
     drive_map = _as_mapping(raw, context="exclusions.yaml: drive")
+    # Opaque entry-level pattern_id (see ``_compile_chat_into`` for the full
+    # rationale): ``drive#N`` carries only the entry's 0-based position within
+    # the ``drive:`` section (counted across every account-id), never the
+    # blocked path value — which would otherwise leak into the Trip, the
+    # changelog, the review-queue, and scan-vault output (§11.1 violation).
+    entry_index = 0
     for account_id, entries_raw in drive_map.items():
         ctx = f"exclusions.yaml: drive[{account_id!r}]"
         if entries_raw is None:
@@ -390,11 +418,12 @@ def _compile_drive_into(
                 )
             add(
                 _Pattern(
-                    pattern_id=f"drive:{account_id}[path={path_raw}]",
+                    pattern_id=f"drive#{entry_index}",
                     tier=tier,
                     regex=_compile_substring_pattern(path_raw),
                 )
             )
+            entry_index += 1
 
 
 def _compile_meetings_into(
@@ -426,10 +455,25 @@ def _compile_meetings_into(
             entry.get("series_id"), key="series_id", context=entry_ctx
         )
         title = _opt_str(entry.get("title"), key="title", context=entry_ctx)
+        # Fail-closed on the silent-zero-pattern config (mirrors the chat-entry
+        # validation in ``_compile_chat_into``): an entry with neither
+        # series_id nor title would add no _Pattern, the guard would compile
+        # clean, and every scan would return Clean for that entry — the
+        # guarantee silently lost. The gate rejects this shape; the guard must
+        # too.
+        if series_id is None and title is None:
+            raise ExclusionConfigError(
+                f"{entry_ctx}: entry has no identifiers "
+                "(need at least one of series_id, title)"
+            )
+        # Opaque entry-level pattern_id (see ``_compile_chat_into``): the id
+        # carries only the entry's 0-based position within the ``meetings:``
+        # section, never the blocked series-id or title value.
+        pattern_id = f"meetings#{i}"
         if series_id is not None:
             add(
                 _Pattern(
-                    pattern_id=f"meetings[series_id={series_id}]",
+                    pattern_id=pattern_id,
                     tier=tier,
                     regex=_compile_token_pattern(series_id),
                 )
@@ -437,7 +481,7 @@ def _compile_meetings_into(
         if title is not None:
             add(
                 _Pattern(
-                    pattern_id=f"meetings[title={title}]",
+                    pattern_id=pattern_id,
                     tier=tier,
                     regex=_compile_substring_pattern(title),
                 )

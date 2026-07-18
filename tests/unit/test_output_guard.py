@@ -134,11 +134,12 @@ def test_blocked_id_trips_persistence(tmp_path: Path) -> None:
     text = f"Hey everyone in {_BLOCKED_ID}, the agenda is attached."
     result = guard.scan(text, surface=Surface.PERSISTENCE, artifact_name="brief.md")
     assert isinstance(result, Trip)
-    # The blocked entry's id appears in the pattern_id (the trip traces back to
-    # the exact exclusions.yaml entry that fired). The prior form
-    # ``_BLOCKED_ID not in ... or _BLOCKED_ID in ...`` was a tautology — always
-    # True — and never asserted anything.
-    assert _BLOCKED_ID in result.pattern_id
+    # pattern_id is OPAQUE (§11.1): it carries only the entry's source + index
+    # (here ``chat#0`` — the first chat entry), never the blocked identifier
+    # value. The blocked id MUST NOT appear in the Trip — that would leak it
+    # into every log/record that carries the Trip.
+    assert result.pattern_id == "chat#0"
+    assert _BLOCKED_ID not in result.pattern_id
     assert result.artifact_name == "brief.md"
 
 
@@ -182,7 +183,10 @@ def test_ephemeral_id_trips_persistence(tmp_path: Path) -> None:
     text = f"DM thread {_EPHEMERAL_ID} had a great exchange today."
     result = guard.scan(text, surface=Surface.PERSISTENCE, artifact_name="day.md")
     assert isinstance(result, Trip)
-    assert _EPHEMERAL_ID in result.pattern_id
+    # Opaque pattern_id (§11.1): the ephemeral entry is the 2nd chat entry →
+    # ``chat#1``; the ephemeral id value MUST NOT leak into the Trip.
+    assert result.pattern_id == "chat#1"
+    assert _EPHEMERAL_ID not in result.pattern_id
 
 
 def test_ephemeral_id_does_not_trip_alert_log(tmp_path: Path) -> None:
@@ -219,7 +223,10 @@ def test_ephemeral_then_blocked_in_same_text_alert_log(tmp_path: Path) -> None:
         surface=Surface.ALERT_LOG,
     )
     assert isinstance(result, Trip)
-    assert _BLOCKED_ID in result.pattern_id
+    # Opaque pattern_id (§11.1): blocked entry is chat#0; the blocked id value
+    # MUST NOT appear in the Trip.
+    assert result.pattern_id == "chat#0"
+    assert _BLOCKED_ID not in result.pattern_id
 
 
 # --- Word-boundary + case-insensitive -------------------------------------
@@ -273,7 +280,10 @@ def test_casefold_parity_sSharfS_matches_ss(tmp_path: Path) -> None:
         "casefold (not re.IGNORECASE) must catch ß↔SS — the gate blocks this "
         "identifier, so the guard must too"
     )
-    assert "Straße" in result.pattern_id
+    # Opaque pattern_id (§11.1): one chat entry → ``chat#0``; the blocked name
+    # value (``Straße`` / ``strasse``) MUST NOT leak into the Trip.
+    assert result.pattern_id == "chat#0"
+    assert "straße" not in result.pattern_id.casefold()
 
 
 def test_casefold_parity_clean_ascii_still_clean(tmp_path: Path) -> None:
@@ -498,10 +508,14 @@ def test_on_trip_no_matched_content_in_changelog_or_queue(tmp_path: Path) -> Non
 
     The matched content (the artifact body) lives only in the quarantined
     artifact file itself, which is the preserved artifact for human review.
+    The blocked identifier value itself also MUST NOT appear in either record
+    — the §11.1 pin: a blocked source appears in no output, log, or vault
+    artifact. The pattern_id is opaque (``chat#N``), so the blocked id has no
+    route into the audit records.
     """
     guard = _guard_with(tmp_path, exclusions=_two_tier_chat_exclusions())
-    secret_marker = "SUPERSECRETOKEN"  # not in exclusions; we assert it never leaks
-    text = f"{secret_marker} near {_BLOCKED_ID} end"
+    content_marker = "SUPERSECRETOKEN"  # not in exclusions; we assert it never leaks
+    text = f"{content_marker} near {_BLOCKED_ID} end"
     trip = guard.scan(text, surface=Surface.PERSISTENCE, artifact_name="x.md")
     assert isinstance(trip, Trip)
     q_path = guard.on_trip(trip, content=text)
@@ -510,20 +524,27 @@ def test_on_trip_no_matched_content_in_changelog_or_queue(tmp_path: Path) -> Non
     queue_path = tmp_path / "state" / "review-queue" / "pending.jsonl"
     queue_text = queue_path.read_text()
 
-    # The secret marker (which exists ONLY in the artifact body) appears in
+    # The content marker (which exists ONLY in the artifact body) appears in
     # the quarantined artifact but NOWHERE in the audit records.
-    assert secret_marker in q_path.read_text()
-    assert secret_marker not in log_text
-    assert secret_marker not in queue_text
-    # And the bare blocked id appears only inside pattern_id, never as the
-    # matched context. (The blocked id IS in pattern_id by design — it's a
-    # config identifier, not artifact content.)
+    assert content_marker in q_path.read_text()
+    assert content_marker not in log_text
+    assert content_marker not in queue_text
+    # §11.1 pin: the blocked identifier value itself MUST NOT appear in either
+    # audit record. The pattern_id is opaque (``chat#0`` here), so the blocked
+    # id has no route into the changelog or review-queue. This is the
+    # hard-guarantee assertion the DEV-16 canary greps for.
+    assert _BLOCKED_ID not in log_text
+    assert _BLOCKED_ID not in queue_text
+    # And confirm the opaque pattern_id IS recorded (the trip traces back to
+    # the entry by position, not by value).
+    assert trip.pattern_id == "chat#0"
+    assert trip.pattern_id in log_text
 
 
 def test_on_trip_appends_review_queue_item(tmp_path: Path) -> None:
     """On a Trip, a needs-sign-off review item is queued (§5.4 / §10.2)."""
     guard = _guard_with(tmp_path, exclusions=_two_tier_chat_exclusions())
-    trip = Trip(pattern_id="chat:slack-work[id=C0HRCHAN]", artifact_name="b.md")
+    trip = Trip(pattern_id="chat#0", artifact_name="b.md")
     guard.on_trip(trip, content="body")
 
     queue_path = tmp_path / "state" / "review-queue" / "pending.jsonl"
@@ -541,7 +562,7 @@ def test_on_trip_idempotent_changelog_appends(tmp_path: Path) -> None:
     guard = _guard_with(tmp_path, exclusions=_two_tier_chat_exclusions())
     for i in range(2):
         guard.on_trip(
-            Trip(pattern_id="chat:slack-work[id=C0HRCHAN]", artifact_name=f"a{i}.md"),
+            Trip(pattern_id="chat#0", artifact_name=f"a{i}.md"),
             content=f"body{i}",
         )
     log_path = next((tmp_path / "state" / "changelog").glob("*.jsonl").__iter__())
@@ -555,7 +576,7 @@ def test_on_trip_idempotent_changelog_appends(tmp_path: Path) -> None:
 def test_quarantine_dir_is_0700(tmp_path: Path) -> None:
     """The quarantine dir is created at mode 0700 (§5.4, §6.2)."""
     guard = _guard_with(tmp_path, exclusions=_two_tier_chat_exclusions())
-    trip = Trip(pattern_id="chat:slack-work[id=C0HRCHAN]", artifact_name="z.md")
+    trip = Trip(pattern_id="chat#0", artifact_name="z.md")
     guard.on_trip(trip, content="body")
     q_dir = tmp_path / "state" / "quarantine"
     mode = q_dir.stat().st_mode & 0o777
@@ -735,7 +756,7 @@ def test_on_trip_fsyncs_quarantine_dir_after_rename(
     monkeypatch.setattr(os, "fsync", _spy_fsync)
 
     guard = OutputGuard(config_root=tmp_path, state_root=st)
-    trip = Trip(pattern_id="chat:slack-work[id=C0HRCHAN]", artifact_name="d.md")
+    trip = Trip(pattern_id="chat#0", artifact_name="d.md")
     guard.on_trip(trip, content="blocked body")
 
     assert fsynced_dir_count >= 1, (
@@ -820,25 +841,27 @@ def test_on_trip_long_ascii_stem_truncates_to_name_max(tmp_path: Path) -> None:
     assert queue[0]["bucket"] == "sign-off"
 
 
-def test_on_trip_multibyte_stem_truncates_on_char_boundary(tmp_path: Path) -> None:
-    """A multibyte stem whose truncation point falls mid-character must still
-    quarantine cleanly, with no dangling partial UTF-8 byte tail in the name.
+def test_on_trip_multibyte_extension_truncates_on_char_boundary(tmp_path: Path) -> None:
+    """A multibyte extension whose truncation point falls mid-character must
+    still quarantine cleanly, with no dangling partial UTF-8 byte tail.
 
-    Same failure mode as the ASCII case: an over-long filename would lose the
-    trip. The byte-level truncation additionally has to land on a UTF-8
-    character boundary, otherwise ``final_name`` would be invalid UTF-8 and
-    (worse) any downstream consumer that re-encodes the path would see a
-    surrogate/error. The fix decodes the truncated byte prefix with
-    ``errors="ignore"`` so any partial trailing multibyte character is
-    dropped whole.
+    The multibyte exercise MUST be on the EXTENSION, not the stem: ``_slugify``
+    collapses any run of non-``[A-Za-z0-9._-]`` to ``-``, so a multibyte stem
+    like ``"ä"*130`` slugifies away to ``"artifact"`` and never reaches the
+    byte-truncation path. The extension is preserved verbatim (only
+    ``Path.suffix`` reads it, no slugify), so a ``.`` + 130 ``ä`` (261 UTF-8
+    bytes) forces the extension-truncation pass to cut mid-character — exactly
+    the case ``errors="ignore"`` must defend. Without that decode guard the
+    truncated byte prefix would end in a partial multi-byte sequence and the
+    filename would be invalid UTF-8.
     """
     guard = _guard_with(tmp_path, exclusions=_two_tier_chat_exclusions())
     text = f"briefing mentioning {_BLOCKED_ID}"
-    # ``ä`` is 2 UTF-8 bytes; 130 of them = 260 bytes. The slug truncation
-    # budget is well under 260, so the cut lands in the middle of a multibyte
-    # character — exactly the case ``errors="ignore"`` must defend.
-    long_stem = "ä" * 130
-    artifact_name = f"{long_stem}.md"
+    # ``.`` + 130 ``ä`` = 1 + 260 = 261 UTF-8 bytes. The stem ``"x"`` slugifies
+    # to a 1-byte slug, so the extension alone drives the truncation: the
+    # fixed-width framing (~30 bytes) + 1-byte slug leave a ~224-byte extension
+    # budget, and the 261-byte extension is cut mid-``ä``.
+    artifact_name = "x" + "." + "ä" * 130
     trip = guard.scan(text, surface=Surface.PERSISTENCE, artifact_name=artifact_name)
     assert isinstance(trip, Trip)
 
@@ -853,6 +876,10 @@ def test_on_trip_multibyte_stem_truncates_on_char_boundary(tmp_path: Path) -> No
     )
     # Round-trips cleanly — no partial multibyte tail survived truncation.
     assert name_bytes.decode("utf-8") == q_path.name
+    # Truncation actually happened: the raw extension was 261 bytes; the
+    # published filename must be shorter than the untruncated composition
+    # would have been (frame + 1-byte slug + 261-byte ext >> 255).
+    assert len(name_bytes) < 255 + len(("." + "ä" * 130).encode("utf-8"))
 
     changelog, queue = _quarantine_records(tmp_path)
     assert len(changelog) == 1
@@ -1143,6 +1170,23 @@ def test_compile_chat_empty_entry_fails_closed(tmp_path: Path) -> None:
         OutputGuard(config_root=tmp_path, state_root=tmp_path / "state")
 
 
+def test_compile_meeting_empty_entry_fails_closed(tmp_path: Path) -> None:
+    """A meeting entry with neither series_id nor title must fail at construction.
+
+    Mirrors the chat-entry empty-identifier guard: without this check the entry
+    would add zero _Pattern objects (no series_id, no title), the guard would
+    compile clean, and every scan would return Clean for that entry — the
+    guarantee silently lost. The gate rejects this shape; the guard must too.
+    """
+    _write_exclusions(
+        tmp_path,
+        {"meetings": [{"tier": "blocked"}]},
+    )
+    (tmp_path / "state").mkdir()
+    with pytest.raises(OutputGuardError):
+        OutputGuard(config_root=tmp_path, state_root=tmp_path / "state")
+
+
 def test_scan_rejects_unknown_surface_value(tmp_path: Path) -> None:
     """``scan`` accepts ONLY the two valid Surface members; else raise.
 
@@ -1334,3 +1378,78 @@ def test_guard_scan_vault_unreadable_note_is_nonzero_with_warning(
     err = captured.err
     assert "unreadable" in err.lower()
     assert "unreadable.md" in err, "the skipped note's name must surface"
+
+
+def test_guard_scan_vault_configured_nondirectory_exits_nonzero(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    """A configured absolute vault that is not a directory → exit 1 + stderr.
+
+    The ``0 findings`` / exit-0 path is reserved for an UNSET vault (no
+    settings, relative path, unparseable settings). A configured absolute
+    path that exists but is a regular file (or is otherwise not a directory,
+    or does not exist at all) is an operator misconfiguration: reporting
+    ``0 findings`` would be a false clean — the scan never ran. Surface to
+    stderr and exit nonzero, the same contract as the incomplete-scan path.
+    """
+    cfg, _ = _xdg(monkeypatch, tmp_path)
+    cli.main(["doctor", "--init"])
+    capsys.readouterr()
+
+    # Configure the vault as an absolute path to a regular file.
+    vault_file = tmp_path / "vault-file"
+    vault_file.write_text("not a directory")
+    settings = cfg / "mark-claw" / "mark" / "settings.yaml"
+    settings.write_text(yaml.safe_dump({"vault": {"path": str(vault_file)}}))
+
+    rc = cli.main(["guard", "scan-vault"])
+    captured = capsys.readouterr()
+
+    assert rc == 1, (
+        "a configured non-directory vault must exit nonzero, not masquerade as "
+        "the unset/0-findings case"
+    )
+    assert "0 findings" not in captured.out
+    assert "not a directory" in captured.err.lower()
+    assert str(vault_file) in captured.err
+
+
+def test_doctor_quarantine_symlink_is_fail(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    """A symlink at ``state/quarantine`` renders as a FAIL check, not a clean OK.
+
+    ``Path.is_dir()`` follows symlinks: a broken symlink or a symlink to
+    another dir would either short-circuit to a false "0 artifacts" OK
+    (broken) or enumerate the target dir (wrong tree). The guard's own
+    ``O_NOFOLLOW`` refuses a symlink at this path; ``mclaw doctor`` must
+    mirror that fail-closed posture so the operator sees the problem — a
+    symlinked quarantine is a fail-closed-surface problem, not a clean zero.
+    """
+    _cfg, st = _xdg(monkeypatch, tmp_path)
+    from mclaw_core import secret
+    monkeypatch.setattr(secret, "list_accounts", lambda *, profile: [])
+    cli.main(["doctor", "--init"])
+    capsys.readouterr()
+
+    # Replace ``quarantine/`` (a real dir after init) with a symlink to an
+    # unrelated directory.
+    q = st / "mark-claw" / "mark" / "quarantine"
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    # Remove the real quarantine dir so the symlink is the only thing at the
+    # path. ``rmdir`` fails if quarantine has files; init creates it empty.
+    q.rmdir()
+    try:
+        q.symlink_to(elsewhere, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot create symlink in test tmp_path here: {exc}")
+
+    cli.main(["doctor"])
+    out = capsys.readouterr().out
+    q_line = next(
+        (line for line in out.splitlines() if "artifact" in line.lower()), ""
+    )
+    assert q_line, "expected a quarantine artifacts line in the doctor report"
+    assert "[FAIL]" in q_line
+    assert "symlink" in q_line.lower()

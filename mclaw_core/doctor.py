@@ -234,22 +234,50 @@ def _check_quarantine(report: DoctorReport, state_root: Path) -> None:
     count stays honest.)
 
     ``quarantine/`` may not exist yet on a pre-init profile; that case
-    renders as ok (zero artifacts). An unreadable ``quarantine/`` dir (a
-    permissions regression, a broken symlink) renders as a hard FAIL — the
-    doctor never tracebacks, and an unreadable quarantine hides artifacts
-    from review, which is itself a state worth surfacing loudly.
+    renders as ok (zero artifacts). A non-directory at that path — a symlink
+    (broken or pointing at another dir), a regular file — renders as a hard
+    FAIL, mirroring the guard's ``O_NOFOLLOW`` discipline: the quarantine root
+    must be a genuine directory the guard validated, not whatever a symlink
+    resolves to. An unreadable ``quarantine/`` dir (a permissions regression)
+    also renders as a hard FAIL — the doctor never tracebacks, and an
+    unreadable quarantine hides artifacts from review, which is itself a state
+    worth surfacing loudly.
     """
     label = "quarantine artifacts"
     q = state_root / "quarantine"
-    if not q.is_dir():
+    # ``Path.is_dir()`` follows symlinks, so a broken symlink or a symlink to
+    # another dir would pass the "is it a dir?" check on the *target* and
+    # either short-circuit to a false "0 artifacts" OK (broken) or enumerate
+    # the target dir (wrong tree). The guard refuses a symlink at this path
+    # with ``O_NOFOLLOW``; the doctor must mirror that fail-closed posture —
+    # check ``is_symlink()`` first, then only a genuinely missing path
+    # short-circuits to STATUS_OK.
+    if q.is_symlink():
+        report.checks.append(
+            Check(
+                label,
+                STATUS_FAIL,
+                "quarantine path is a symlink — refusing to follow",
+            )
+        )
+        return
+    if not q.exists():
         report.checks.append(Check(label, STATUS_OK, "0 artifacts"))
+        return
+    if not q.is_dir():
+        # Exists but is a regular file (or other non-directory non-symlink
+        # type). The guard's ``O_NOFOLLOW | O_DIRECTORY`` open would refuse
+        # this; doctor reports it as a FAIL rather than a clean zero.
+        report.checks.append(
+            Check(label, STATUS_FAIL, "quarantine path is not a directory")
+        )
         return
     try:
         # ``iterdir`` reads the directory, not just its metadata; an unreadable
-        # but existing dir (mode regression, broken symlink) raises here where
-        # ``is_dir()`` above did not. Wrap so the doctor reports rather than
-        # tracebacks — but as a FAIL, because an unreadable quarantine is a
-        # fail-closed-surface problem, not a clean zero.
+        # but existing dir (mode regression) raises here where ``is_dir()``
+        # above did not. Wrap so the doctor reports rather than tracebacks —
+        # but as a FAIL, because an unreadable quarantine is a fail-closed-
+        # surface problem, not a clean zero.
         files = [p for p in q.iterdir() if p.is_file()]
     except OSError as exc:
         report.checks.append(

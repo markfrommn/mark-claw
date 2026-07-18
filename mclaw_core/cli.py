@@ -133,9 +133,23 @@ def _cmd_guard_scan_vault(profile: str) -> int:
       failure=exit-1; an incomplete scan is a failure.
     """
     vault = _resolve_vault_path(profile)
-    if vault is None or not vault.is_dir():
+    if vault is None:
+        # Unset / relative / unparseable settings — the §B4 AC exit-0 path.
+        # Reserved for "no vault configured"; a configured-but-wrong-shape
+        # vault is a failure (see the ``not is_dir()`` branch below).
         print("0 findings")
         return 0
+    if not vault.is_dir():
+        # A configured absolute vault that is not a directory (a regular file,
+        # a broken symlink, or a path that does not exist) is an operator
+        # misconfiguration, not the unset case. Reporting "0 findings" here
+        # would be a false clean — the scan never ran. Surface to stderr and
+        # exit nonzero, the same contract as the incomplete-scan path below.
+        print(
+            f"mclaw guard scan-vault: configured vault is not a directory: {vault}",
+            file=sys.stderr,
+        )
+        return 1
 
     try:
         guard = output_guard.OutputGuard.for_profile(profile)
