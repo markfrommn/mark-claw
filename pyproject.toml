@@ -1,0 +1,48 @@
+[project]
+name = "mark-claw"
+version = "0.1.0"
+description = "Tooling layer for the mark-claw personal AI assistant system (no personal data, no secrets)."
+requires-python = ">=3.12"
+# Runtime dependency set is intentionally empty: the tooling layer is stdlib-only
+# (argparse CLI + the built-in macOS `security`/`age` binaries). The framework
+# deny-list test (tests/unit/test_deny_list.py) guards this against agent-runtime
+# packages per MARK-CLAW-TOOLS.md §12.
+dependencies = []
+
+[project.scripts]
+mclaw = "mclaw_core.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mclaw_core"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "mypy>=1.10",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["mclaw_core", "tests"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+# Tests use pytest fixtures/monkeypatch that don't need full strictness.
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
