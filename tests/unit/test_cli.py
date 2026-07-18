@@ -5,7 +5,9 @@ from __future__ import annotations
 import os
 import shutil
 import stat
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -59,8 +61,33 @@ def test_help_lists_all_subcommands(capsys) -> None:
         cli.main(["--help"])
     assert exc.value.code == 0
     out = capsys.readouterr().out
-    for name in ("doctor", "auth", "secret", "exclusions", "fetch", "ingest", "guard"):
+    for name in (
+        "doctor",
+        "auth",
+        "secret",
+        "exclusions",
+        "fetch",
+        "ingest",
+        "guard",
+        "test",
+    ):
         assert name in out
+
+
+def test_canary_command_runs_canary_suite(monkeypatch) -> None:
+    """The stable CI command delegates only to the committed canary suite."""
+    calls: list[tuple[list[str], bool]] = []
+
+    def fake_run(command: list[str], *, check: bool) -> SimpleNamespace:
+        calls.append((command, check))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("mclaw_core.cli.subprocess.run", fake_run)
+
+    assert cli.main(["test", "--canary"]) == 0
+    assert calls == [
+        ([sys.executable, "-m", "pytest", str(cli._CANARY_TEST_DIR)], False)
+    ]
 
 
 def test_no_command_prints_help_and_returns_nonzero(capsys) -> None:
