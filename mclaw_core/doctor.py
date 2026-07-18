@@ -210,8 +210,96 @@ def run_doctor(profile: str, *, init: bool = False) -> DoctorReport:
 
     _check_keychain(report, profile)
     _check_vault(report, settings_data)
+    # Quarantine check (§5.4 / §B4): a nonzero artifact count renders red
+    # (FAIL) so a tripped-and-querantined artifact is visible at every doctor
+    # run until the operator reviews it via the weekly review loop.
+    _check_quarantine(report, st)
 
     return report
+
+
+def _check_quarantine(report: DoctorReport, state_root: Path) -> None:
+    """Render the quarantine count: FAIL (red) when artifacts are present.
+
+    Per §5.4 / §B4: ``mclaw doctor`` shows ``quarantine/`` count ≠ 0 in red.
+    Counts **all regular files** in ``quarantine/``. The guard currently
+    writes NO sidecars — every trip's metadata lives in the changelog, and
+    the artifact body is the only file written — so any file in
+    ``quarantine/`` is a quarantined artifact. (Earlier code excluded
+    ``.json`` in anticipation of per-trip sidecars that were never added;
+    excluding them today undercounts: a real artifact named ``report.json``
+    would be missed, doctor would report 0/exit 0 with one awaiting review.
+    If a future sidecar convention lands, it MUST use a distinguishable
+    suffix (e.g. ``.meta.json``) or a ``quarantine/.meta/`` subdir so this
+    count stays honest.)
+
+    ``quarantine/`` may not exist yet on a pre-init profile; that case
+    renders as ok (zero artifacts). A non-directory at that path — a symlink
+    (broken or pointing at another dir), a regular file — renders as a hard
+    FAIL, mirroring the guard's ``O_NOFOLLOW`` discipline: the quarantine root
+    must be a genuine directory the guard validated, not whatever a symlink
+    resolves to. An unreadable ``quarantine/`` dir (a permissions regression)
+    also renders as a hard FAIL — the doctor never tracebacks, and an
+    unreadable quarantine hides artifacts from review, which is itself a state
+    worth surfacing loudly.
+    """
+    label = "quarantine artifacts"
+    q = state_root / "quarantine"
+    # ``Path.is_dir()`` follows symlinks, so a broken symlink or a symlink to
+    # another dir would pass the "is it a dir?" check on the *target* and
+    # either short-circuit to a false "0 artifacts" OK (broken) or enumerate
+    # the target dir (wrong tree). The guard refuses a symlink at this path
+    # with ``O_NOFOLLOW``; the doctor must mirror that fail-closed posture —
+    # check ``is_symlink()`` first, then only a genuinely missing path
+    # short-circuits to STATUS_OK.
+    if q.is_symlink():
+        report.checks.append(
+            Check(
+                label,
+                STATUS_FAIL,
+                "quarantine path is a symlink — refusing to follow",
+            )
+        )
+        return
+    if not q.exists():
+        report.checks.append(Check(label, STATUS_OK, "0 artifacts"))
+        return
+    if not q.is_dir():
+        # Exists but is a regular file (or other non-directory non-symlink
+        # type). The guard's ``O_NOFOLLOW | O_DIRECTORY`` open would refuse
+        # this; doctor reports it as a FAIL rather than a clean zero.
+        report.checks.append(
+            Check(label, STATUS_FAIL, "quarantine path is not a directory")
+        )
+        return
+    try:
+        # ``iterdir`` reads the directory, not just its metadata; an unreadable
+        # but existing dir (mode regression) raises here where ``is_dir()``
+        # above did not. Wrap so the doctor reports rather than tracebacks —
+        # but as a FAIL, because an unreadable quarantine is a fail-closed-
+        # surface problem, not a clean zero.
+        files = [p for p in q.iterdir() if p.is_file()]
+    except OSError as exc:
+        report.checks.append(
+            Check(
+                label,
+                STATUS_FAIL,
+                f"unreadable: {type(exc).__name__} — cannot enumerate",
+            )
+        )
+        return
+    artifact_count = len(files)
+    if artifact_count == 0:
+        report.checks.append(Check(label, STATUS_OK, "0 artifacts"))
+    else:
+        noun = "artifact" if artifact_count == 1 else "artifacts"
+        report.checks.append(
+            Check(
+                label,
+                STATUS_FAIL,
+                f"{artifact_count} {noun} quarantined — review required",
+            )
+        )
 
 
 def _check_config_file(report: DoctorReport, path: Path) -> dict[str, object] | None:

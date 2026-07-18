@@ -543,12 +543,98 @@ def test_auth_is_stub_nonzero(capsys, provider) -> None:
     assert "DEV-31" in err
 
 
-@pytest.mark.parametrize("command", ["exclusions", "fetch", "ingest", "guard"])
+@pytest.mark.parametrize("command", ["exclusions", "fetch", "ingest"])
 def test_plain_stubs_nonzero(capsys, command) -> None:
     rc = cli.main([command])
     err = capsys.readouterr().err
     assert rc == 1
     assert "not implemented" in err
+
+
+def test_guard_bare_no_subaction_is_nonzero_stub(capsys) -> None:
+    """``mclaw guard`` with no sub-action exits non-zero with the stub message.
+
+    ``guard scan-vault`` is implemented (B4 / DEV-15); other potential actions
+    remain stubs, and bare ``guard`` falls through to the stub dispatcher.
+    """
+    rc = cli.main(["guard"])
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "not implemented" in err
+
+
+def test_guard_scan_vault_construction_failure_exits_nonzero(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    """``guard scan-vault`` exits 1 on guard construction failure (§B4).
+
+    The scan's own contract distinguishes "0 findings → exit 0" (informational
+    spot-check) from "guard construction failure → exit 1" (a broken
+    ``exclusions.yaml`` means the guard cannot compile a fail-closed policy —
+    the operator must fix config before the spot-check is meaningful). The
+    empty/clean/findings paths cover exit 0; this test covers the exit-1 path
+    via a malformed ``exclusions.yaml`` (an entry with an unknown tier).
+    """
+    cfg, _ = _xdg(monkeypatch, tmp_path)
+    _stub_keychain_reachable(monkeypatch)
+    cli.main(["doctor", "--init"])  # skeleton config + state
+    capsys.readouterr()
+
+    # A configured vault that exists as a dir — required so the scan reaches
+    # guard construction (no vault short-circuits to "0 findings", exit 0).
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    _write_valid_settings(cfg / "mark-claw" / "mark" / "settings.yaml", str(vault))
+
+    # Malformed exclusions: an unknown tier value fails at construction.
+    (cfg / "mark-claw" / "mark" / "exclusions.yaml").write_text(
+        "chat:\n  s:\n    - {id: X, tier: secret}\n", encoding="utf-8"
+    )
+
+    rc = cli.main(["guard", "scan-vault"])
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "guard scan-vault" in err
+    assert "cannot compile guard" in err
+
+
+def test_guard_scan_vault_enumeration_error_exits_nonzero(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    """``guard scan-vault`` handles a vault-traversal ``OSError`` without a traceback.
+
+    The ``vault.rglob("*.md")`` enumeration is outside the per-note
+    ``read_text`` try/except. If the traversal itself hits a filesystem error
+    (an unreadable subdir, a broken symlink on a directory entry, a permissions
+    flip mid-scan), the loop raises ``OSError`` and — left unhandled — surfaces
+    as an uncaught traceback. The scan-vault contract already distinguishes
+    0-findings=exit-0 from failure=exit-1; "cannot enumerate the vault" is a
+    failure of the same class as the per-note unreadable-skip path and must
+    surface as a clean stderr message + exit 1, not a crash.
+
+    Patching ``Path.rglob`` to raise is the portable way to exercise this:
+    exercising it via a real unreadable subdir is brittle under root and across
+    filesystems, and the contract under test is "an OSError from enumeration is
+    handled", whatever its cause.
+    """
+    cfg, _ = _xdg(monkeypatch, tmp_path)
+    _stub_keychain_reachable(monkeypatch)
+    cli.main(["doctor", "--init"])  # skeleton config + state
+    capsys.readouterr()
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    _write_valid_settings(cfg / "mark-claw" / "mark" / "settings.yaml", str(vault))
+
+    def boom(self, pattern):
+        raise OSError("simulated traversal failure")
+
+    monkeypatch.setattr(Path, "rglob", boom)
+    rc = cli.main(["guard", "scan-vault"])
+    err = capsys.readouterr().err
+    assert rc == 1, "an enumeration failure must exit nonzero, not crash"
+    assert "cannot enumerate vault" in err
+    assert "simulated traversal failure" in err
 
 
 def test_secret_get_dispatches(monkeypatch, capsys) -> None:
