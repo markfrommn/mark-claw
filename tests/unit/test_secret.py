@@ -35,6 +35,17 @@ def test_account_slug_requires_both_parts() -> None:
         secret.account_slug("", "field")
 
 
+def test_account_slug_rejects_dash_in_field() -> None:
+    # A '-' in <field> would make distinct (item, field) pairs collide.
+    with pytest.raises(secret.SecretError, match="delimiter"):
+        secret.account_slug("a", "b-c")
+
+
+def test_account_slug_allows_dash_in_item() -> None:
+    # <item> may contain '-'; the last '-' splits item/field.
+    assert secret.account_slug("entra-app", "client_id") == "entra-app-client_id"
+
+
 def test_add_argv_never_contains_value() -> None:
     argv = secret._add_argv("mark-claw-mark", "google-token")
     assert SECRET_VALUE not in argv
@@ -181,6 +192,25 @@ def test_list_accounts_uses_dump(monkeypatch) -> None:
     def fake_run(argv, text=None, capture_output=None):
         assert argv == ["security", "dump-keychain"]
         return SimpleNamespace(returncode=0, stdout=DUMP_SAMPLE, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert secret.list_accounts(profile="mark") == ["google-token", "slack-xoxp"]
+
+
+def test_list_accounts_fails_closed_on_unreachable_keychain(monkeypatch) -> None:
+    # Non-zero exit + empty stdout = enumeration failed; must NOT return [].
+    def fake_run(argv, text=None, capture_output=None):
+        return SimpleNamespace(returncode=1, stdout="", stderr="keychain locked")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(secret.SecretError, match="enumeration failed"):
+        secret.list_accounts(profile="mark")
+
+
+def test_list_accounts_parses_when_records_printed_despite_nonzero(monkeypatch) -> None:
+    # Non-zero exit but records WERE printed → parse what we got (intended).
+    def fake_run(argv, text=None, capture_output=None):
+        return SimpleNamespace(returncode=1, stdout=DUMP_SAMPLE, stderr="partial")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     assert secret.list_accounts(profile="mark") == ["google-token", "slack-xoxp"]

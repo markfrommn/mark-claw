@@ -27,14 +27,37 @@ DEFAULT_PROFILE = "mark"
 APP_DIR = "mark-claw"
 
 
+def validate_profile(profile: str) -> str:
+    """Return ``profile`` unchanged, or raise ``ValueError`` if unsafe.
+
+    The profile is joined into filesystem paths (config/state roots), so a value
+    that is a path separator, a traversal component, or contains a NUL would
+    break profile isolation — e.g. ``MCLAW_PROFILE=/etc`` (an absolute component
+    replaces the whole prefix on join) or ``MCLAW_PROFILE=../other`` (escapes the
+    app dir). Reject those loudly rather than silently resolving outside the
+    per-profile subtree.
+    """
+    if not profile:
+        raise ValueError("profile must not be empty")
+    if profile in {".", ".."}:
+        raise ValueError(f"profile must not be a path traversal component: {profile!r}")
+    if "/" in profile or "\\" in profile or "\x00" in profile:
+        raise ValueError(
+            f"profile must not contain a path separator or NUL: {profile!r}"
+        )
+    return profile
+
+
 def resolve_profile(environ: os._Environ[str] | dict[str, str] | None = None) -> str:
     """Return the active profile name from the environment.
 
-    Falls back to :data:`DEFAULT_PROFILE` when the env var is unset or blank.
+    Falls back to :data:`DEFAULT_PROFILE` when the env var is unset or blank, and
+    validates the resolved value so a malformed ``MCLAW_PROFILE`` fails loudly
+    instead of resolving paths outside the per-profile subtree.
     """
     env = os.environ if environ is None else environ
     value = env.get(PROFILE_ENV, "").strip()
-    return value or DEFAULT_PROFILE
+    return validate_profile(value or DEFAULT_PROFILE)
 
 
 def _xdg_root(
@@ -61,7 +84,7 @@ def config_root(
 ) -> Path:
     """Return the config root for ``profile`` (default: active profile)."""
     env = os.environ if environ is None else environ
-    prof = profile if profile is not None else resolve_profile(env)
+    prof = validate_profile(profile) if profile is not None else resolve_profile(env)
     return _xdg_root("XDG_CONFIG_HOME", ".config", env) / APP_DIR / prof
 
 
@@ -71,5 +94,5 @@ def state_root(
 ) -> Path:
     """Return the state root for ``profile`` (default: active profile)."""
     env = os.environ if environ is None else environ
-    prof = profile if profile is not None else resolve_profile(env)
+    prof = validate_profile(profile) if profile is not None else resolve_profile(env)
     return _xdg_root("XDG_STATE_HOME", ".local/state", env) / APP_DIR / prof

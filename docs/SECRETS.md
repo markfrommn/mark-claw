@@ -18,6 +18,10 @@ no personal data, so every example below uses generic placeholders
   secret *value*. If a credential has multiple parts (e.g. a client ID and a
   client secret, or an API ID and an API hash), each part gets its own item
   under the same service, with the field name as the account suffix.
+- The `<field>` component must **not** contain the `-` delimiter (use `_`, as in
+  `client_id`, `api_hash`, `tenant_id`) — the last `-` in the slug splits item
+  from field, so a `-` in `<field>` would make distinct pairs collide; `<item>`
+  may contain `-` (e.g. `entra-app`).
 - One keychain item per secret value. Don't pack multiple secrets into one
   item's password field (e.g. as JSON) — it defeats per-secret rotation and
   makes `security` lookups ambiguous.

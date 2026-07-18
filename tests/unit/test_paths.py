@@ -4,7 +4,43 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from mclaw_core import paths
+
+
+@pytest.mark.parametrize("good", ["mark", "work-acct", "foo_bar", "DEFAULT.PROFILE"])
+def test_validate_profile_accepts_safe_names(good) -> None:
+    assert paths.validate_profile(good) == good
+
+
+def test_default_profile_is_valid() -> None:
+    assert paths.validate_profile(paths.DEFAULT_PROFILE) == "mark"
+
+
+@pytest.mark.parametrize(
+    "bad", ["/etc", "../other", "a/b", "..", ".", "", "a\\b", "x\x00y"]
+)
+def test_validate_profile_rejects_injection(bad) -> None:
+    with pytest.raises(ValueError):
+        paths.validate_profile(bad)
+
+
+def test_resolve_profile_rejects_bad_env() -> None:
+    with pytest.raises(ValueError):
+        paths.resolve_profile({"MCLAW_PROFILE": "/etc"})
+    with pytest.raises(ValueError):
+        paths.resolve_profile({"MCLAW_PROFILE": "../other"})
+
+
+def test_config_root_rejects_bad_explicit_profile() -> None:
+    with pytest.raises(ValueError):
+        paths.config_root("../other", {"XDG_CONFIG_HOME": "/c"})
+
+
+def test_state_root_rejects_bad_explicit_profile() -> None:
+    with pytest.raises(ValueError):
+        paths.state_root("/etc", {"XDG_STATE_HOME": "/s"})
 
 
 def test_default_profile_when_unset() -> None:

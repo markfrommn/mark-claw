@@ -41,9 +41,22 @@ def service_name(profile: str) -> str:
 
 
 def account_slug(item: str, field: str) -> str:
-    """Return the flattened ``<item>-<field>`` account slug."""
+    """Return the flattened ``<item>-<field>`` account slug.
+
+    ``field`` must not contain the ``-`` delimiter: the slug is ``<item>-<field>``
+    and the last ``-`` is what splits item from field, so a ``-`` in ``field``
+    makes distinct pairs collide (``item="a-b", field="c"`` and
+    ``item="a", field="b-c"`` would both yield ``a-b-c``, and ``set_secret``'s
+    ``-U`` would silently overwrite). All real fields use ``_`` (``client_id``,
+    ``api_hash``, ``tenant_id``), so this rejects nothing in practice. ``item``
+    may still contain ``-`` (e.g. ``entra-app``).
+    """
     if not item or not field:
         raise SecretError("both <item> and <field> are required")
+    if "-" in field:
+        raise SecretError(
+            f"<field> must not contain the '-' delimiter (use '_'): {field!r}"
+        )
     return f"{item}-{field}"
 
 
@@ -192,7 +205,14 @@ def list_accounts(*, profile: str) -> list[str]:
     except FileNotFoundError as exc:  # pragma: no cover - security is built-in
         raise SecretError(f"`{SECURITY}` not found on PATH") from exc
     # dump-keychain returns non-zero on some locked/foreign keychains but still
-    # prints the accessible records to stdout; parse whatever we got.
+    # prints the accessible records to stdout; parse whatever we got. But a
+    # non-zero exit with EMPTY stdout means enumeration actually failed (locked /
+    # unreachable keychain) — fail closed rather than report an empty set, which
+    # would let export_backup silently write a backup with no secrets.
+    if proc.returncode != 0 and not proc.stdout.strip():
+        raise SecretError(
+            f"keychain enumeration failed for {service}: {proc.stderr.strip()}"
+        )
     return parse_accounts_for_service(proc.stdout, service)
 
 
