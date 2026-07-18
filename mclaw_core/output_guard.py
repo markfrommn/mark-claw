@@ -171,18 +171,36 @@ def _compile_token_pattern(identifier: str) -> re.Pattern[str]:
     return re.compile(rf"(?<!\w){re.escape(identifier)}(?!\w)", re.IGNORECASE)
 
 
-def _compile_path_pattern(path: str) -> re.Pattern[str]:
-    """Compile a case-insensitive substring regex for a drive-path identifier.
+def _compile_substring_pattern(identifier: str) -> re.Pattern[str]:
+    """Compile a case-insensitive substring regex for a free-text-span identifier.
 
-    Drive paths are path-tree prefixes in the gate (``/HR`` blocks ``/HR/x`` via
-    ancestry), but in artifact *text* a path appears as a literal substring
-    (e.g. ``"see /HR/payroll"``). Plain substring match (case-insensitive)
-    catches every textual occurrence; applying word boundaries would miss
-    ``/HR/payroll`` against an ``/HR/`` entry because the char after ``/HR/``
-    is ``p`` — a word char — and the trailing boundary would reject the match.
-    Substring is the right model for path-shaped identifiers in free text.
+    Used for two identifier kinds that appear in artifact text as contiguous
+    substrings rather than as whole tokens:
+
+    * **drive paths** — ``/HR`` blocks ``/HR/x`` via path-ancestry in the gate,
+      but in artifact *text* a path appears as a literal substring (e.g.
+      ``"see /HR/payroll"``). Plain substring match catches every textual
+      occurrence; applying word boundaries would miss ``/HR/payroll`` against
+      an ``/HR/`` entry because the char after ``/HR/`` is ``p`` — a word
+      char — and the trailing boundary would reject the match.
+    * **meeting titles** — the fetch gate matches event titles by
+      case-insensitive *containment* (a title ``Comp review`` blocks an event
+      titled ``Comp reviews Q3``). The output guard must apply the same model
+      so the two layers agree on what an excluded title is; a word-boundary
+      compile here would let ``Comp reviews Q3`` through (trailing ``s``
+      defeats ``(?!\\w)``) even though the gate blocked it.
+
+    Trailing slashes are stripped before escaping so a configured ``/HR/``
+    matches text ``"see /HR"`` (no trailing slash) — the gate normalizes the
+    same way. Substring is broader than token match and therefore fail-closed
+    (more quarantine, no leak).
     """
-    return re.compile(re.escape(path), re.IGNORECASE)
+    # ``rstrip("/") or identifier`` keeps a sole-"/" path from collapsing to
+    # the empty string (which would match everything); it is an extreme edge
+    # case but the guard must not silently match all text on a degenerate
+    # config value.
+    normalized = identifier.rstrip("/") or identifier
+    return re.compile(re.escape(normalized), re.IGNORECASE)
 
 
 def _slugify(name: str) -> str:
@@ -278,6 +296,16 @@ def _compile_chat_into(
             aliases = _str_list(
                 entry.get("also_match"), key="also_match", context=entry_ctx
             )
+            # Fail-closed on the silent-zero-pattern config: an entry with none
+            # of id/name/also_match would add no _Pattern, so the guard would
+            # compile clean and every scan would return Clean for that entry —
+            # the guarantee silently lost. The gate rejects this shape; the
+            # guard must too (mirrors gate discipline on the same config file).
+            if entry_id is None and name is None and not aliases:
+                raise ExclusionConfigError(
+                    f"{entry_ctx}: entry has no identifiers "
+                    "(need at least one of id, name, also_match)"
+                )
             if entry_id is not None:
                 add(
                     _Pattern(
@@ -309,9 +337,9 @@ def _compile_drive_into(
 ) -> None:
     """Walk the ``drive:`` section, compile each entry's path.
 
-    The path is compiled with :func:`_compile_path_pattern` (substring match,
-    not word-bounded) because path-tree prefixes don't translate to word
-    boundaries in free text — see :func:`_compile_path_pattern`.
+    The path is compiled with :func:`_compile_substring_pattern` (substring
+    match, not word-bounded) because path-tree prefixes don't translate to
+    word boundaries in free text — see :func:`_compile_substring_pattern`.
     """
     if "drive" not in top:
         return
@@ -341,7 +369,7 @@ def _compile_drive_into(
                 _Pattern(
                     pattern_id=f"drive:{account_id}[path={path_raw}]",
                     tier=tier,
-                    regex=_compile_path_pattern(path_raw),
+                    regex=_compile_substring_pattern(path_raw),
                 )
             )
 
@@ -349,7 +377,15 @@ def _compile_drive_into(
 def _compile_meetings_into(
     top: dict[str, object], add: Callable[[_Pattern], None]
 ) -> None:
-    """Walk the flat ``meetings:`` section, compile ``series_id`` + ``title``."""
+    """Walk the flat ``meetings:`` section, compile ``series_id`` + ``title``.
+
+    The ``series_id`` is a stable opaque token (a calendar event series id) so
+    it compiles as a word-boundary token. The ``title`` is free text the fetch
+    gate matches by case-insensitive *containment* (``Comp review`` blocks
+    ``Comp reviews Q3``), so it compiles with the substring compiler — a
+    word-boundary compile here would diverge from the gate and let through
+    exactly the titles the gate blocks.
+    """
     if "meetings" not in top:
         return
     raw = top["meetings"]
@@ -380,7 +416,7 @@ def _compile_meetings_into(
                 _Pattern(
                     pattern_id=f"meetings[title={title}]",
                     tier=tier,
-                    regex=_compile_token_pattern(title),
+                    regex=_compile_substring_pattern(title),
                 )
             )
 
@@ -534,11 +570,25 @@ class OutputGuard:
         item so the operator can trace the trip back to the artifact. It is
         never used as input to the regex match (it is not the matched text).
         """
-        patterns = (
-            self._persistence_patterns
-            if surface is Surface.PERSISTENCE
-            else self._alert_log_patterns
-        )
+        # Fail-closed on the surface selector: accept ONLY the two valid enum
+        # members. The prior ternary fell through to the alert-log (blocked-
+        # only) set for ANY non-PERSISTENCE value (a string, None, an invalid
+        # enum) — so an ephemeral identifier could pass as Clean on an
+        # intended-persistence scan when the caller passed a wrong surface.
+        # The hard guarantee must not hinge on a silent default.
+        if surface is Surface.PERSISTENCE:
+            patterns = self._persistence_patterns
+        elif surface is Surface.ALERT_LOG:
+            patterns = self._alert_log_patterns
+        else:
+            # ``surface: Surface`` is the typed signature, but Python does not
+            # enforce it at runtime; a wrong-type value reaching here is a
+            # caller bug, and a guarantee module surfaces caller bugs loudly
+            # rather than degrading to a permissive default.
+            raise OutputGuardError(
+                f"unknown surface {surface!r} "
+                "(expected Surface.PERSISTENCE or Surface.ALERT_LOG)"
+            )
         for pat in patterns:
             if pat.regex.search(text):
                 return Trip(pattern_id=pat.pattern_id, artifact_name=artifact_name)

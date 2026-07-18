@@ -117,13 +117,20 @@ def cmd_guard(args: argparse.Namespace) -> int:
 def _cmd_guard_scan_vault(profile: str) -> int:
     """Walk the profile's vault and scan every note through the guard.
 
-    Per the §B4 acceptance criterion, an empty/unset vault prints
-    ``"0 findings"`` and exits 0. A configured vault with notes is scanned
-    against the persistence deny-pattern set (vault notes are the canonical
-    persistence surface — §5.4) and the count is reported. The command never
-    exits non-zero on findings (it is the §5.5.3 continuous spot-check, not a
-    gate); the only non-zero path is a guard construction failure (broken
-    ``exclusions.yaml``), which is reported to stderr.
+    Per the §B4 acceptance criterion, an empty/unset/relative vault prints
+    ``"0 findings"`` and exits 0. A configured absolute vault with notes is
+    scanned against the persistence deny-pattern set (vault notes are the
+    canonical persistence surface — §5.4) and the count is reported. The
+    command never exits non-zero on findings (it is the §5.5.3 continuous
+    spot-check, not a gate); the non-zero paths are:
+
+    * a guard construction failure (broken ``exclusions.yaml``) — reported to
+      stderr;
+    * an incomplete scan (one or more notes could not be read — ``OSError``,
+      broken symlink, non-UTF-8) — printed as a warning, because reporting
+      ``"0 findings"`` while notes were silently skipped is a false clean.
+      The scan-vault contract already distinguishes 0-findings=exit-0 from
+      failure=exit-1; an incomplete scan is a failure.
     """
     vault = _resolve_vault_path(profile)
     if vault is None or not vault.is_dir():
@@ -137,10 +144,20 @@ def _cmd_guard_scan_vault(profile: str) -> int:
         return 1
 
     findings: list[output_guard.Trip] = []
+    unreadable: list[str] = []
     for note_path in sorted(vault.rglob("*.md")):
         try:
             text = note_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+        except (OSError, UnicodeDecodeError) as exc:
+            # Surface the skip rather than hide it. A broken-symlink /
+            # unreadable / non-UTF-8 note could be the very note carrying a
+            # blocked identifier; reporting "0 findings" while skipping it
+            # would be a false clean. Accumulate the relative path and warn
+            # after the scan; the exit code is nonzero so the spot-check
+            # cannot masquerade as success.
+            unreadable.append(
+                f"{note_path.relative_to(vault)} ({type(exc).__name__})"
+            )
             continue
         rel = str(note_path.relative_to(vault))
         result = guard.scan(
@@ -148,6 +165,21 @@ def _cmd_guard_scan_vault(profile: str) -> int:
         )
         if isinstance(result, output_guard.Trip):
             findings.append(result)
+
+    if unreadable:
+        # Report the finding count first (the operator's primary question),
+        # then the warning + skipped list. Exit nonzero: the scan did not
+        # cover the whole vault, so "0 findings" alone would be misleading.
+        print(f"{len(findings)} finding(s)")
+        for trip in findings:
+            print(f"  {trip.pattern_id}  {trip.artifact_name}")
+        print(
+            f"warning: {len(unreadable)} note(s) unreadable — scan incomplete:",
+            file=sys.stderr,
+        )
+        for entry in unreadable:
+            print(f"  {entry}", file=sys.stderr)
+        return 1
 
     if not findings:
         print("0 findings")
@@ -162,9 +194,17 @@ def _resolve_vault_path(profile: str) -> Path | None:
     """Return the configured absolute vault path, or ``None`` if unset.
 
     Reads ``settings.yaml → vault.path`` (the only source for the vault root,
-    per design §6.1). A non-string or empty value is treated as unset; a
-    relative path is returned as-is (the caller's ``is_dir()`` check handles
-    the not-a-directory case). Never raises — a malformed settings file simply
+    per design §6.1). Returns ``None`` when:
+
+    * ``settings.yaml`` is absent / unparseable / not a mapping;
+    * ``vault`` or ``vault.path`` is missing / non-string / empty;
+    * ``vault.path`` is relative after expansion — a relative path would be
+      resolved against the launchd-invoked process's cwd (which is **not** a
+      stable anchor for the vault), so the scan would either miss the real
+      vault entirely or scan an unrelated directory. Treated as unset so the
+      caller reports ``0 findings`` rather than scanning cwd by accident.
+
+    Never raises — a malformed settings file or an unknown ``~user`` simply
     means "no vault configured", which the caller reports as ``0 findings``.
     """
     settings_path = paths.config_root(profile) / "settings.yaml"
@@ -183,7 +223,19 @@ def _resolve_vault_path(profile: str) -> Path | None:
     raw = vault.get("path", "")
     if not isinstance(raw, str) or not raw.strip():
         return None
-    return Path(raw).expanduser()
+    try:
+        # ``Path.expanduser`` raises ``RuntimeError`` on an unknown ``~user``
+        # and ``OSError`` on a pathological value. The contract here is
+        # "never raises" (a malformed vault path is the operator's settings
+        # problem, not a traceback at scan-vault time) — treat both as unset.
+        expanded = Path(raw).expanduser()
+    except (RuntimeError, OSError):
+        return None
+    if not expanded.is_absolute():
+        # A relative path is the wrong shape for a vault root — do NOT scan
+        # cwd by accident. The operator should set an absolute path.
+        return None
+    return expanded
 
 
 def build_parser() -> argparse.ArgumentParser:

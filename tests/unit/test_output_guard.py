@@ -24,6 +24,8 @@ Coverage of the §B4 acceptance criteria (per ``specs/plans/PHASE-1-PLAN.md``):
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -705,14 +707,19 @@ def test_doctor_quarantine_nonzero_renders_red(monkeypatch, capsys, tmp_path) ->
     assert "1" in q_line  # the count surfaces
 
 
-def test_doctor_quarantine_ignores_sidecar_metadata(
+def test_doctor_quarantine_counts_all_regular_files(
     monkeypatch, capsys, tmp_path
 ) -> None:
-    """The quarantine count must reflect artifacts, not audit sidecars.
+    """The quarantine count reflects every regular file in ``quarantine/``.
 
-    A ``.json`` sidecar (reserved for future per-trip metadata) is not counted
-    as a quarantined artifact — only artifact files contribute to the red
-    count.
+    The guard currently writes NO sidecars — every trip's metadata lives in
+    the changelog, and the artifact body is the only file written — so any
+    file in ``quarantine/`` is a quarantined artifact, including a
+    ``.json``-named one (a real artifact named e.g. ``report.json``). Earlier
+    code excluded ``.json`` in anticipation of per-trip sidecars that were
+    never added; that undercounted and let a quarantined ``report.json`` hide
+    from review. If a future sidecar convention lands it must use a
+    distinguishable suffix (``.meta.json``) or ``.meta/`` subdir.
     """
     _cfg, st = _xdg(monkeypatch, tmp_path)
     from mclaw_core import secret
@@ -722,11 +729,224 @@ def test_doctor_quarantine_ignores_sidecar_metadata(
 
     q = st / "mark-claw" / "mark" / "quarantine"
     (q / "2026-07-18T120000Z--brief--abcd1234.md").write_text("blocked body")
-    (q / "ignored.json").write_text("{}")
+    (q / "2026-07-18T120100Z--report--beef5678.json").write_text("{}")
 
     cli.main(["doctor"])
     out = capsys.readouterr().out
     q_line = next(
         (line for line in out.splitlines() if "artifact" in line.lower()), ""
     )
-    assert "1 artifact" in q_line  # not 2
+    assert "2 artifacts" in q_line  # both regular files count
+
+
+# --- Macroscope follow-on: fail-closed gap coverage (DEV-15 review) --------
+
+
+def test_compile_chat_empty_entry_fails_closed(tmp_path: Path) -> None:
+    """A chat entry with none of id/name/also_match must fail at construction.
+
+    Without this check the entry would add zero _Pattern objects, the guard
+    would compile clean, and every scan would return Clean for that entry —
+    the guarantee silently lost. The gate rejects this shape; the guard must
+    too. Fail-closed on the silent-zero-pattern config.
+    """
+    _write_exclusions(
+        tmp_path,
+        {"chat": {"slack-work": [{"tier": "blocked"}]}},
+    )
+    (tmp_path / "state").mkdir()
+    with pytest.raises(OutputGuardError):
+        OutputGuard(config_root=tmp_path, state_root=tmp_path / "state")
+
+
+def test_scan_rejects_unknown_surface_value(tmp_path: Path) -> None:
+    """``scan`` accepts ONLY the two valid Surface members; else raise.
+
+    The typed signature ``surface: Surface`` is not enforced at runtime, so a
+    caller bug passing a wrong-type value (a string, None, an int) must not
+    silently fall through to the alert-log (blocked-only) pattern set — that
+    would let an ephemeral identifier pass as Clean on an intended-
+    persistence scan. A guarantee module surfaces caller bugs loudly.
+    """
+    guard = _guard_with(tmp_path, exclusions=_two_tier_chat_exclusions())
+    # Cast through ``object`` then back to ``Surface`` to defeat mypy without
+    # introducing a real Surface member. At runtime this is a plain string,
+    # which exercises the else-branch.
+    bad_surface: Surface = "persistence"  # type: ignore[assignment]
+    with pytest.raises(OutputGuardError):
+        guard.scan(
+            f"see {_BLOCKED_ID}", surface=bad_surface, artifact_name="x.md"
+        )
+
+
+def test_scan_rejects_none_surface(tmp_path: Path) -> None:
+    """``None`` is not a valid surface — fail closed rather than degrade."""
+    guard = _guard_with(tmp_path, exclusions=_two_tier_chat_exclusions())
+    bad_surface: Surface = None  # type: ignore[assignment]
+    with pytest.raises(OutputGuardError):
+        guard.scan(f"see {_BLOCKED_ID}", surface=bad_surface)
+
+
+def test_drive_path_trailing_slash_matches_no_trailing_text(tmp_path: Path) -> None:
+    """A configured ``/HR/`` matches text ``"see /HR"`` (no trailing slash).
+
+    The fetch gate normalizes ``/HR/`` → ``/HR``; the output guard must do
+    the same so the two layers agree on what's blocked. Before the fix the
+    raw ``/HR/`` was compiled verbatim, so a text occurrence without the
+    trailing slash ("see /HR for details") passed as Clean.
+    """
+    guard = _guard_with(
+        tmp_path,
+        exclusions={"drive": {"gdrive-work": [{"path": "/HR/", "tier": "blocked"}]}},
+    )
+    result = guard.scan("see /HR for the details", surface=Surface.PERSISTENCE)
+    assert isinstance(result, Trip)
+
+
+def test_drive_path_trailing_slash_matches_nested_path(tmp_path: Path) -> None:
+    """A configured ``/HR/`` still matches ``"see /HR/payroll"`` after normalization.
+
+    Regression guard on the trailing-slash fix: rstrip must not eat into the
+    real path content. ``/HR/`` → ``/HR`` still substring-matches
+    ``/HR/payroll``.
+    """
+    guard = _guard_with(
+        tmp_path,
+        exclusions={"drive": {"gdrive-work": [{"path": "/HR/", "tier": "blocked"}]}},
+    )
+    result = guard.scan("see /HR/payroll for salary", surface=Surface.PERSISTENCE)
+    assert isinstance(result, Trip)
+
+
+def test_meeting_title_substring_matches_inflected(tmp_path: Path) -> None:
+    """A title ``Comp review`` trips artifact text ``Comp reviews Q3``.
+
+    The fetch gate matches event titles by case-insensitive *containment* —
+    ``Comp review`` blocks an event titled ``Comp reviews Q3``. The output
+    guard must compile titles with the substring compiler so the two layers
+    agree; a word-boundary compile would let the inflected form through
+    (trailing ``s`` defeats ``(?!\\w)``) even though the gate blocked it.
+    """
+    guard = _guard_with(
+        tmp_path,
+        exclusions={
+            "meetings": [
+                {"series_id": "abc123", "title": "Comp review", "tier": "blocked"}
+            ]
+        },
+    )
+    result = guard.scan(
+        "Comp reviews Q3 went long today", surface=Surface.PERSISTENCE
+    )
+    assert isinstance(result, Trip)
+
+
+def test_doctor_quarantine_unreadable_dir_is_fail_no_traceback(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    """An unreadable ``quarantine/`` dir renders as a FAIL check, not a traceback.
+
+    Covers the ``iterdir()`` OSError path: ``is_dir()`` reads metadata only,
+    so an existing-but-unreadable dir (mode regression) raises at enumeration.
+    The doctor must surface it as a FAIL line and keep going, never crash.
+    POSIX ``root`` bypasses the ``0o000`` mode so the test skips there.
+    """
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root bypasses mode 0o000 — cannot exercise unreadable dir")
+    _cfg, st = _xdg(monkeypatch, tmp_path)
+    from mclaw_core import secret
+    monkeypatch.setattr(secret, "list_accounts", lambda *, profile: [])
+    cli.main(["doctor", "--init"])
+    capsys.readouterr()
+
+    q = st / "mark-claw" / "mark" / "quarantine"
+    (q / "2026-07-18T120000Z--brief--abcd1234.md").write_text("blocked body")
+    os.chmod(q, 0o000)
+    try:
+        # Must not raise; must render a FAIL line.
+        rc = cli.main(["doctor"])
+        out = capsys.readouterr().out
+    finally:
+        # Restore read/write/exec so pytest's tmp_path cleanup can rm it.
+        os.chmod(q, stat.S_IRWXU)
+
+    q_line = next(
+        (line for line in out.splitlines() if "artifact" in line.lower()), ""
+    )
+    assert q_line, "expected a quarantine artifacts line in the doctor report"
+    assert "[FAIL]" in q_line
+    assert "unreadable" in q_line
+    _ = rc  # exit code is incidental to the no-traceback contract; the FAIL
+            # line is what proves the path was reached without crashing.
+
+
+def test_guard_scan_vault_relative_path_treated_as_unset(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    """A relative ``vault.path`` is treated as unset → ``0 findings`` / exit 0.
+
+    Without this guard the scan would resolve the relative path against the
+    CLI process's cwd (launchd invokes with cwd ``/``), which is not a stable
+    anchor for the vault. The scan could report ``0 findings`` while the real
+    vault is never scanned (false clean) or scan an unrelated directory.
+    """
+    cfg, _ = _xdg(monkeypatch, tmp_path)
+    cli.main(["doctor", "--init"])
+    capsys.readouterr()
+
+    # Relative vault path — would be resolved against cwd if not treated as
+    # unset. The test runs from a known cwd, so this assertion is only
+    # meaningful if the resolver returns None regardless of cwd contents.
+    settings = cfg / "mark-claw" / "mark" / "settings.yaml"
+    settings.write_text(yaml.safe_dump({"vault": {"path": "notes"}}))
+
+    # Even if a directory named "notes" happens to exist in cwd, the resolver
+    # must treat the relative path as unset.
+    rc = cli.main(["guard", "scan-vault"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "0 findings" in out
+
+
+def test_guard_scan_vault_unreadable_note_is_nonzero_with_warning(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    """An unreadable vault note surfaces as a warning + nonzero exit.
+
+    Without this the scan would silently skip the note and report ``0
+    findings`` — a false clean if the unreadable note was the one carrying
+    a blocked identifier. The scan-vault contract distinguishes 0-findings=
+    exit-0 from failure=exit-1; an incomplete scan is a failure.
+
+    POSIX ``root`` bypasses the ``0o000`` mode so the test skips there.
+    """
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root bypasses mode 0o000 — cannot exercise unreadable note")
+    cfg, _ = _xdg(monkeypatch, tmp_path)
+    cli.main(["doctor", "--init"])
+    capsys.readouterr()
+
+    vault = tmp_path / "vault"
+    (vault / "days").mkdir(parents=True)
+    clean_note = vault / "days" / "clean.md"
+    clean_note.write_text("# today\n\nnothing sensitive")
+    unreadable_note = vault / "days" / "unreadable.md"
+    unreadable_note.write_text("# would carry a blocked id if we could read it")
+    # Wire the vault into settings so the scan actually reaches the notes
+    # (without this the resolver returns None and the scan short-circuits to
+    # "0 findings" before enumerating any note — masking the very behavior
+    # under test).
+    (cfg / "mark-claw" / "mark" / "settings.yaml").write_text(
+        yaml.safe_dump({"vault": {"path": str(vault)}})
+    )
+    os.chmod(unreadable_note, 0o000)
+    try:
+        rc = cli.main(["guard", "scan-vault"])
+        captured = capsys.readouterr()
+    finally:
+        os.chmod(unreadable_note, stat.S_IRUSR | stat.S_IWUSR)
+
+    assert rc == 1, "an incomplete scan must exit nonzero (not 0-findings exit 0)"
+    err = captured.err
+    assert "unreadable" in err.lower()
+    assert "unreadable.md" in err, "the skipped note's name must surface"

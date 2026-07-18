@@ -222,19 +222,45 @@ def _check_quarantine(report: DoctorReport, state_root: Path) -> None:
     """Render the quarantine count: FAIL (red) when artifacts are present.
 
     Per §5.4 / §B4: ``mclaw doctor`` shows ``quarantine/`` count ≠ 0 in red.
-    Counts only artifact files (``*.md``, ``*.txt`` …); a ``.json`` sidecar is
-    not a quarantined artifact — it is reserved for future per-trip metadata
-    and must not inflate the count. ``quarantine/`` may not exist yet on a
-    pre-init profile; that case renders as ok (zero artifacts).
+    Counts **all regular files** in ``quarantine/``. The guard currently
+    writes NO sidecars — every trip's metadata lives in the changelog, and
+    the artifact body is the only file written — so any file in
+    ``quarantine/`` is a quarantined artifact. (Earlier code excluded
+    ``.json`` in anticipation of per-trip sidecars that were never added;
+    excluding them today undercounts: a real artifact named ``report.json``
+    would be missed, doctor would report 0/exit 0 with one awaiting review.
+    If a future sidecar convention lands, it MUST use a distinguishable
+    suffix (e.g. ``.meta.json``) or a ``quarantine/.meta/`` subdir so this
+    count stays honest.)
+
+    ``quarantine/`` may not exist yet on a pre-init profile; that case
+    renders as ok (zero artifacts). An unreadable ``quarantine/`` dir (a
+    permissions regression, a broken symlink) renders as a hard FAIL — the
+    doctor never tracebacks, and an unreadable quarantine hides artifacts
+    from review, which is itself a state worth surfacing loudly.
     """
     label = "quarantine artifacts"
     q = state_root / "quarantine"
     if not q.is_dir():
         report.checks.append(Check(label, STATUS_OK, "0 artifacts"))
         return
-    artifact_count = sum(
-        1 for p in q.iterdir() if p.is_file() and p.suffix != ".json"
-    )
+    try:
+        # ``iterdir`` reads the directory, not just its metadata; an unreadable
+        # but existing dir (mode regression, broken symlink) raises here where
+        # ``is_dir()`` above did not. Wrap so the doctor reports rather than
+        # tracebacks — but as a FAIL, because an unreadable quarantine is a
+        # fail-closed-surface problem, not a clean zero.
+        files = [p for p in q.iterdir() if p.is_file()]
+    except OSError as exc:
+        report.checks.append(
+            Check(
+                label,
+                STATUS_FAIL,
+                f"unreadable: {type(exc).__name__} — cannot enumerate",
+            )
+        )
+        return
+    artifact_count = len(files)
     if artifact_count == 0:
         report.checks.append(Check(label, STATUS_OK, "0 artifacts"))
     else:
