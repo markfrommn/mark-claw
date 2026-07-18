@@ -323,6 +323,12 @@ uv run mclaw guard scan-vault   # command exists; on empty vault → "0 findings
 ```
 - [ ] Done · Linear: [DEV-15](https://linear.app/psols/issue/DEV-15)
 
+**Deviation (DEV-15, 2026-07-18):** four recorded decisions, none weakening a hard rule.
+1. **Drive-path identifiers match as substrings; tokens use word-boundary.** §5.4 says "word-boundary, case-insensitive." Token identifiers (IDs, names, aliases, `also_match`, meeting titles) compile as `(?<!\w)X(?!\w)` — a word-boundary variant that still anchors identifiers containing punctuation (e.g. `#hr-stuff`). Drive-path identifiers compile as case-insensitive substrings, because a path appears in artifact text as a contiguous span (`/HR/payroll`) where `\b` would reject the match. Substring is broader → fail-closed (more quarantine, no leak); §5.4 is updated in this PR to spell out the two strategies.
+2. **Quarantined artifact files are chmod 0600.** §5.4 specifies the quarantine dir at 0700; the artifact file itself is tightened to 0600 (belt-and-suspenders — content that tripped the guard is sensitive; the 0700 dir already excludes other users).
+3. **`mclaw doctor` maps nonzero quarantine to FAIL/red (exit 1).** §5.4 says doctor "reds nonzero quarantine"; the existing doctor vocabulary's "red" is `STATUS_FAIL`, so a pending quarantine contributes to `doctor` exit 1 until cleared via the review loop.
+4. **Telegram trip alert is a no-op stub.** §5.4 fires a system-severity Telegram alert on trip; the notify layer is Phase 2, so `OutputGuard._notify_guard_trip` lands as a clearly-marked stub to be wired when notify exists. The fail-closed quarantine + changelog + review-queue path is fully functional without it.
+
 ### B5 — Canary suite (CI-blocking)
 **Lands:** repo (`tests/canary/` fixture profile + integration test).
 **Do:** per design §5.5.2: fixture profile (`MCLAW_PROFILE=canary`, config/state under `tests/canary/tmp/`) whose exclusions block a fixture channel/folder/contact seeded with sentinel tokens `MCX-CANARY-<uuid>`; run every Phase-1 pipeline (fetch base + ingest writers, mocked providers) over fixture data; assert **zero** sentinel occurrences across the whole output tree (spool, vault fixture dir, logs, run records) and ephemeral content exists only transiently. Wire as pre-commit/CI gate: `uv run mclaw test --canary` must pass before any commit touching `mclaw_core/`, `bin/`, or writers.
