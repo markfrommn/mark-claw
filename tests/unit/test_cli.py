@@ -543,9 +543,21 @@ def test_auth_is_stub_nonzero(capsys, provider) -> None:
     assert "DEV-31" in err
 
 
-@pytest.mark.parametrize("command", ["exclusions", "fetch", "ingest", "guard"])
+@pytest.mark.parametrize("command", ["exclusions", "fetch", "ingest"])
 def test_plain_stubs_nonzero(capsys, command) -> None:
     rc = cli.main([command])
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "not implemented" in err
+
+
+def test_guard_bare_no_subaction_is_nonzero_stub(capsys) -> None:
+    """``mclaw guard`` with no sub-action exits non-zero with the stub message.
+
+    ``guard scan-vault`` is implemented (B4 / DEV-15); other potential actions
+    remain stubs, and bare ``guard`` falls through to the stub dispatcher.
+    """
+    rc = cli.main(["guard"])
     err = capsys.readouterr().err
     assert rc == 1
     assert "not implemented" in err

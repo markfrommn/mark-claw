@@ -12,16 +12,21 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
-from . import __version__, doctor, paths, secret
+import yaml
+
+from . import __version__, doctor, output_guard, paths, secret
 
 #: Subcommands that are intentionally not implemented in this unit. Each prints a
 #: clear message and exits non-zero so callers cannot mistake a stub for a no-op.
+#: (``guard`` has a real ``scan-vault`` subcommand — wired up in
+#: :func:`_build_guard_parser` / :func:`cmd_guard`; only its other potential
+#: subactions remain stubs.)
 _STUBS: dict[str, str] = {
     "exclusions": "manage exclusion lists",
     "fetch": "run a source fetch",
     "ingest": "ingest fetched items into the vault",
-    "guard": "run the fail-closed output guard",
 }
 
 _AUTH_PROVIDERS = ("google", "graph", "telegram")
@@ -93,6 +98,94 @@ def cmd_stub(args: argparse.Namespace) -> int:
     return _print_stub(args.command)
 
 
+def cmd_guard(args: argparse.Namespace) -> int:
+    """Dispatch the ``guard`` subcommands.
+
+    Currently only ``scan-vault`` is implemented (B4 / DEV-15): the continuous
+    spot-check of design §5.5.3, scanning every vault note through the output
+    guard and reporting findings. The scan is informational — it never
+    quarantines or blocks; the fail-closed action happens at write time inside
+    :meth:`mclaw_core.output_guard.OutputGuard.on_trip`. An exit code of 0 with
+    a non-zero finding count lets the weekly review surface findings without
+    failing CI (the canary suite in B5/DEV-16 is the gating test).
+    """
+    if getattr(args, "guard_cmd", None) == "scan-vault":
+        return _cmd_guard_scan_vault(paths.resolve_profile())
+    return _print_stub("guard")
+
+
+def _cmd_guard_scan_vault(profile: str) -> int:
+    """Walk the profile's vault and scan every note through the guard.
+
+    Per the §B4 acceptance criterion, an empty/unset vault prints
+    ``"0 findings"`` and exits 0. A configured vault with notes is scanned
+    against the persistence deny-pattern set (vault notes are the canonical
+    persistence surface — §5.4) and the count is reported. The command never
+    exits non-zero on findings (it is the §5.5.3 continuous spot-check, not a
+    gate); the only non-zero path is a guard construction failure (broken
+    ``exclusions.yaml``), which is reported to stderr.
+    """
+    vault = _resolve_vault_path(profile)
+    if vault is None or not vault.is_dir():
+        print("0 findings")
+        return 0
+
+    try:
+        guard = output_guard.OutputGuard.for_profile(profile)
+    except output_guard.OutputGuardError as exc:
+        print(f"mclaw guard scan-vault: cannot compile guard: {exc}", file=sys.stderr)
+        return 1
+
+    findings: list[output_guard.Trip] = []
+    for note_path in sorted(vault.rglob("*.md")):
+        try:
+            text = note_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        rel = str(note_path.relative_to(vault))
+        result = guard.scan(
+            text, surface=output_guard.Surface.PERSISTENCE, artifact_name=rel
+        )
+        if isinstance(result, output_guard.Trip):
+            findings.append(result)
+
+    if not findings:
+        print("0 findings")
+        return 0
+    print(f"{len(findings)} finding(s)")
+    for trip in findings:
+        print(f"  {trip.pattern_id}  {trip.artifact_name}")
+    return 0
+
+
+def _resolve_vault_path(profile: str) -> Path | None:
+    """Return the configured absolute vault path, or ``None`` if unset.
+
+    Reads ``settings.yaml → vault.path`` (the only source for the vault root,
+    per design §6.1). A non-string or empty value is treated as unset; a
+    relative path is returned as-is (the caller's ``is_dir()`` check handles
+    the not-a-directory case). Never raises — a malformed settings file simply
+    means "no vault configured", which the caller reports as ``0 findings``.
+    """
+    settings_path = paths.config_root(profile) / "settings.yaml"
+    if not settings_path.is_file():
+        return None
+    try:
+        with settings_path.open(encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    except (yaml.YAMLError, OSError, UnicodeDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    vault = data.get("vault")
+    if not isinstance(vault, dict):
+        return None
+    raw = vault.get("path", "")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    return Path(raw).expanduser()
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Construct the top-level argument parser and all subcommands."""
     parser = argparse.ArgumentParser(
@@ -126,11 +219,42 @@ def build_parser() -> argparse.ArgumentParser:
 
     _build_secret_parser(sub)
 
+    _build_guard_parser(sub)
+
     for name, help_text in _STUBS.items():
         stub = sub.add_parser(name, help=f"{help_text} (stub)")
         stub.set_defaults(func=cmd_stub, command=name)
 
     return parser
+
+
+def _build_guard_parser(
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    """Add the ``guard`` subcommand with its ``scan-vault`` sub-action.
+
+    ``guard scan-vault`` is the §5.5.3 continuous spot-check over the vault
+    (B4 / DEV-15). Other potential guard actions remain out of scope; the
+    dispatcher :func:`cmd_guard` falls through to the stub message for any
+    unimplemented sub-action.
+    """
+    guard = sub.add_parser(
+        "guard",
+        help="run the fail-closed output guard",
+    )
+    # Default dispatch for bare ``mclaw guard`` (no sub-action): goes to
+    # :func:`cmd_guard`, which prints the stub message and exits non-zero.
+    # A real sub-action (``scan-vault``) overrides via its own ``set_defaults``.
+    guard.set_defaults(func=cmd_guard)
+    guard_sub = guard.add_subparsers(
+        dest="guard_cmd",
+        metavar="<action>",
+    )
+    sv = guard_sub.add_parser(
+        "scan-vault",
+        help="scan every vault note through the output guard; report findings",
+    )
+    sv.set_defaults(func=cmd_guard)
 
 
 def _build_secret_parser(

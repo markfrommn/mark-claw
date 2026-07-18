@@ -210,8 +210,42 @@ def run_doctor(profile: str, *, init: bool = False) -> DoctorReport:
 
     _check_keychain(report, profile)
     _check_vault(report, settings_data)
+    # Quarantine check (§5.4 / §B4): a nonzero artifact count renders red
+    # (FAIL) so a tripped-and-querantined artifact is visible at every doctor
+    # run until the operator reviews it via the weekly review loop.
+    _check_quarantine(report, st)
 
     return report
+
+
+def _check_quarantine(report: DoctorReport, state_root: Path) -> None:
+    """Render the quarantine count: FAIL (red) when artifacts are present.
+
+    Per §5.4 / §B4: ``mclaw doctor`` shows ``quarantine/`` count ≠ 0 in red.
+    Counts only artifact files (``*.md``, ``*.txt`` …); a ``.json`` sidecar is
+    not a quarantined artifact — it is reserved for future per-trip metadata
+    and must not inflate the count. ``quarantine/`` may not exist yet on a
+    pre-init profile; that case renders as ok (zero artifacts).
+    """
+    label = "quarantine artifacts"
+    q = state_root / "quarantine"
+    if not q.is_dir():
+        report.checks.append(Check(label, STATUS_OK, "0 artifacts"))
+        return
+    artifact_count = sum(
+        1 for p in q.iterdir() if p.is_file() and p.suffix != ".json"
+    )
+    if artifact_count == 0:
+        report.checks.append(Check(label, STATUS_OK, "0 artifacts"))
+    else:
+        noun = "artifact" if artifact_count == 1 else "artifacts"
+        report.checks.append(
+            Check(
+                label,
+                STATUS_FAIL,
+                f"{artifact_count} {noun} quarantined — review required",
+            )
+        )
 
 
 def _check_config_file(report: DoctorReport, path: Path) -> dict[str, object] | None:
