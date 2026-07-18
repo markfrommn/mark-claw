@@ -860,6 +860,68 @@ def test_on_trip_multibyte_stem_truncates_on_char_boundary(tmp_path: Path) -> No
     assert len(queue) == 1
 
 
+def test_on_trip_long_extension_truncates_to_name_max(tmp_path: Path) -> None:
+    """A pathological ``artifact_name`` extension that on its own overflows
+    ``NAME_MAX`` must still quarantine cleanly.
+
+    Companion to the long-stem cases above: those pin the *stem* truncation
+    path, this test pins the *extension* truncation path. The slug budget is
+    computed against the original (possibly very long) extension, so a
+    ~240-byte suffix clamps ``max_slug`` to 0 and leaves ``final_name``
+    overflowing 255 bytes on the extension alone. On the unpatched code
+    ``os.replace`` then raised ``ENAMETOOLONG`` *before* the rename landed,
+    which propagated out of ``on_trip`` before the changelog and
+    review-queue appends — the tripped artifact was neither written to its
+    destination nor preserved in quarantine for review. That is strictly
+    worse than §5.4's accepted "lost until reviewed" state, which assumes a
+    quarantine copy exists.
+
+    With the fix the extension is trimmed by UTF-8 byte length after the
+    slug pass, ``on_trip`` returns a real path, the quarantined file exists
+    at mode 0600 under ``quarantine/``, content matches the trip, and
+    exactly one ``guard.trip`` changelog record and one review-queue item
+    are appended. The composed filename is at most 255 UTF-8 bytes and
+    round-trips through ``decode`` without error.
+    """
+    guard = _guard_with(tmp_path, exclusions=_two_tier_chat_exclusions())
+    text = f"briefing mentioning {_BLOCKED_ID}"
+    # 240-byte "extension" — ``Path.suffix`` returns ``.`` + 240 ASCII bytes
+    # (241 bytes). The fixed-width framing (``{ts}--`` + ``--`` + uuid8) is
+    # ~30 bytes, so on the unpatched code the 241-byte extension pushes
+    # ``final_name`` to ~271 bytes — well past NAME_MAX — once the slug
+    # budget has already clamped to 0.
+    artifact_name = "x" + ("." + "a" * 240)
+    trip = guard.scan(text, surface=Surface.PERSISTENCE, artifact_name=artifact_name)
+    assert isinstance(trip, Trip)
+
+    q_path = guard.on_trip(trip, content=text, actor="briefing-assembler")
+
+    # The trip succeeded: a quarantine file exists at the returned path...
+    assert q_path.is_file()
+    assert q_path.read_text(encoding="utf-8") == text
+    assert q_path.is_relative_to(tmp_path / "state" / "quarantine")
+    # ...with 0600 permissions like every other quarantined artifact.
+    mode = q_path.stat().st_mode & 0o777
+    assert mode == 0o600, f"quarantined file expected 0600, got {oct(mode)}"
+
+    # The composed filename fits NAME_MAX (a byte limit) and is valid UTF-8.
+    name_bytes = q_path.name.encode("utf-8")
+    assert len(name_bytes) <= 255, (
+        f"quarantine filename exceeds 255-byte NAME_MAX: {len(name_bytes)} bytes"
+    )
+    # ``encode`` round-trips only if there are no dangling partial chars.
+    assert name_bytes.decode("utf-8") == q_path.name
+
+    # The changelog and review-queue are still appended — the trip is auditable.
+    changelog, queue = _quarantine_records(tmp_path)
+    assert len(changelog) == 1
+    assert changelog[0]["action"] == "guard.trip"
+    assert changelog[0]["target"] == artifact_name
+    assert changelog[0]["detail"]["quarantine_path"] == str(q_path)
+    assert len(queue) == 1
+    assert queue[0]["bucket"] == "sign-off"
+
+
 # --- Fail-closed on the guard's own error paths ---------------------------
 
 

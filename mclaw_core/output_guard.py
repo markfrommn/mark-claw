@@ -745,10 +745,13 @@ class OutputGuard:
         disambiguates same-second same-name trips. The extension is preserved
         from ``artifact_name`` when one is present (``.md``, ``.txt`` …); the
         default is ``.md`` (the dominant vault surface per design §3.3). The
-        slug is truncated by UTF-8 byte length so the whole filename fits the
-        filesystem's 255-byte ``NAME_MAX`` — an over-long name would make the
-        rename raise ``ENAMETOOLONG`` and lose the trip (no quarantine copy
-        for review, no changelog/queue record).
+        slug and extension are each truncated by UTF-8 byte length (slug first,
+        then extension) so the whole filename fits the filesystem's 255-byte
+        ``NAME_MAX`` — an over-long name would make the rename raise
+        ``ENAMETOOLONG`` and lose the trip (no quarantine copy for review, no
+        changelog/queue record). A truncated or dropped extension leaves a
+        valid extension-less quarantine filename; the file is identified by
+        its path plus the changelog/review-queue records, not by extension.
 
         Atomic write (unique temp + ``fsync`` + rename) — an interrupted trip
         leaves at worst a truncated *temp*, never a truncated quarantine file.
@@ -775,19 +778,21 @@ class OutputGuard:
             ext = art_path.suffix or ".md"
             u = uuid.uuid4().hex[:8]
             # Compose ``YYYY-MM-DDThhmmssZ--<slug>--<uuid8><ext>`` but cap the
-            # total filename at the filesystem's 255-byte ``NAME_MAX``: the
-            # source artifact's stem can be arbitrarily long, and an
-            # over-long ``final_name`` makes ``os.replace`` raise
+            # total filename at the filesystem's 255-byte ``NAME_MAX``: both
+            # the source artifact's stem AND its extension can be arbitrarily
+            # long, and an over-long ``final_name`` makes ``os.replace`` raise
             # ``ENAMETOOLONG`` *before* the rename lands — losing the trip
             # entirely (no quarantine copy, no changelog record, no
             # review-queue item), which is worse than §5.4's accepted
             # "lost until reviewed" state (that assumes a quarantine copy
-            # exists). ``NAME_MAX`` is a *byte* limit, so truncate the slug
-            # by UTF-8 encoded length and decode with ``errors="ignore"`` so
-            # a multibyte character at the cut point is dropped whole rather
-            # than left as an invalid UTF-8 tail.
+            # exists). ``NAME_MAX`` is a *byte* limit, so truncate slug and
+            # extension by UTF-8 encoded length and decode with
+            # ``errors="ignore"`` so a multibyte character at a cut point is
+            # dropped whole rather than left as an invalid UTF-8 tail. Trim
+            # in priority order — slug first, then extension.
             prefix = f"{ts}--"
-            suffix = f"--{u}{ext}"
+            sep_uuid = f"--{u}"
+            suffix = f"{sep_uuid}{ext}"
             max_slug = max(
                 0,
                 255
@@ -796,7 +801,25 @@ class OutputGuard:
             )
             slug_bytes = slug.encode("utf-8")[:max_slug]
             slug = slug_bytes.decode("utf-8", errors="ignore")
-            final_name = f"{prefix}{slug}{suffix}"
+            # Second pass: the slug budget above was computed against the
+            # original (possibly pathological) extension. A long enough
+            # ``artifact_name`` suffix (e.g. ``.`` + 240 bytes) clamps
+            # ``max_slug`` to 0 and leaves the extension itself overflowing
+            # 255 bytes, so ``os.replace`` would still raise
+            # ``ENAMETOOLONG`` and the trip would be lost. Trim the
+            # extension by UTF-8 bytes so the whole name fits; if even the
+            # bare fixed-width framing (``prefix`` + slug + ``sep_uuid`` —
+            # ~30 bytes, well under 255) overflowed (impossible for the
+            # ts/uuid framing, but guard it anyway), ``max_ext`` is 0 and
+            # ext is dropped entirely, leaving a valid extension-less
+            # quarantine filename (the file is identified by its path plus
+            # the changelog/review-queue records, not by extension).
+            frame_no_ext = f"{prefix}{slug}{sep_uuid}"
+            max_ext = max(0, 255 - len(frame_no_ext.encode("utf-8")))
+            ext_bytes = ext.encode("utf-8")
+            if len(ext_bytes) > max_ext:
+                ext = ext_bytes[:max_ext].decode("utf-8", errors="ignore")
+            final_name = f"{frame_no_ext}{ext}"
             dest = q / final_name
             fd, tmp_name = self._open_temp_in_quarantine(q_fd)
             try:
