@@ -46,6 +46,28 @@ def test_account_slug_allows_dash_in_item() -> None:
     assert secret.account_slug("entra-app", "client_id") == "entra-app-client_id"
 
 
+@pytest.mark.parametrize(
+    ("item", "field"),
+    [
+        ("a\nb", "field"),
+        ("item", "x\ny"),
+        ("item", "a\tb"),
+        ("a\rb", "field"),
+        ("a\x00b", "field"),
+        ("item", "x\x00y"),
+    ],
+)
+def test_account_slug_rejects_control_characters(item, field) -> None:
+    # A control char would split dump-keychain output across lines, silently
+    # omitting the credential from list/export.
+    with pytest.raises(secret.SecretError, match="control characters"):
+        secret.account_slug(item, field)
+
+
+def test_account_slug_ordinary_values_unaffected() -> None:
+    assert secret.account_slug("entra-app", "client_id") == "entra-app-client_id"
+
+
 def test_add_argv_never_contains_value() -> None:
     argv = secret._add_argv("mark-claw-mark", "google-token")
     assert SECRET_VALUE not in argv

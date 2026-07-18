@@ -50,6 +50,13 @@ def account_slug(item: str, field: str) -> str:
     ``-U`` would silently overwrite). All real fields use ``_`` (``client_id``,
     ``api_hash``, ``tenant_id``), so this rejects nothing in practice. ``item``
     may still contain ``-`` (e.g. ``entra-app``).
+
+    Control characters are rejected in both components: a newline (or other C0
+    control) would survive into the keychain account string, but
+    ``parse_accounts_for_service`` reads ``dump-keychain`` output line-by-line, so
+    such an account splits across lines and never matches — silently omitting the
+    credential from ``list_accounts``/``export_backup``, which promise the full
+    set.
     """
     if not item or not field:
         raise SecretError("both <item> and <field> are required")
@@ -57,6 +64,11 @@ def account_slug(item: str, field: str) -> str:
         raise SecretError(
             f"<field> must not contain the '-' delimiter (use '_'): {field!r}"
         )
+    for component, label in ((item, "item"), (field, "field")):
+        if any(ord(c) < 0x20 for c in component):
+            raise SecretError(
+                f"<{label}> must not contain control characters: {component!r}"
+            )
     return f"{item}-{field}"
 
 
