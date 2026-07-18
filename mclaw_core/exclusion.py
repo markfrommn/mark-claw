@@ -241,7 +241,14 @@ def _opt_str(value: object, *, key: str, context: str) -> str | None:
 
 
 def _str_list(value: object, *, key: str, context: str) -> list[str]:
-    """Narrow a list-of-strings field (e.g. ``also_match``); defaults to empty."""
+    """Narrow a list-of-strings field (e.g. ``also_match``); defaults to empty.
+
+    A present-but-empty string element is rejected, mirroring :func:`_opt_str`:
+    an empty ``also_match`` alias can never match a real chat name, so an entry
+    whose only identifier is ``[""]`` is silently inert — and an empty alias
+    alongside valid ones is a typo the operator should hear about. Reject at
+    load rather than degrade the fail-loud promise.
+    """
     if value is None:
         return []
     raw_list = _as_list(value, context=f"{context}: '{key}'")
@@ -251,6 +258,10 @@ def _str_list(value: object, *, key: str, context: str) -> list[str]:
             raise ExclusionConfigError(
                 f"{context}: '{key}[{i}]' must be a string, "
                 f"got {type(item).__name__}"
+            )
+        if not item:
+            raise ExclusionConfigError(
+                f"{context}: '{key}[{i}]' must be a non-empty string"
             )
         result.append(item)
     return result

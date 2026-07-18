@@ -648,6 +648,65 @@ def test_empty_meeting_series_id_raises(tmp_path: Path) -> None:
         ExclusionGate.load(tmp_path)
 
 
+# --- empty-string also_match alias guards (Macroscope review fix 3) --------
+
+
+def test_empty_also_match_alias_raises(tmp_path: Path) -> None:
+    """An empty-string ``also_match`` alias is malformed — reject at load.
+
+    Without this guard, ``aliases=[""]`` is non-empty, so the inert-entry
+    guard (``if id is None and name is None and not aliases``) passes the
+    entry through — but ``""`` can never match a real chat name, so the entry
+    is silently inert. This contradicts the module's fail-loud promise
+    (already enforced by ``_opt_str`` for id/name/series_id/title).
+    """
+    _write_exclusions(
+        tmp_path,
+        {"chat": {"s": [{"id": "C0X", "tier": "blocked", "also_match": [""]}]}},
+    )
+    _write_whitelist(tmp_path, [])
+    with pytest.raises(ExclusionConfigError, match="non-empty"):
+        ExclusionGate.load(tmp_path)
+
+
+def test_empty_alias_among_valid_raises(tmp_path: Path) -> None:
+    """A single bad alias fails the whole entry — surfacing the typo loudly."""
+    _write_exclusions(
+        tmp_path,
+        {
+            "chat": {
+                "s": [
+                    {
+                        "id": "C0X",
+                        "tier": "blocked",
+                        "also_match": ["valid", ""],
+                    }
+                ]
+            }
+        },
+    )
+    _write_whitelist(tmp_path, [])
+    with pytest.raises(ExclusionConfigError, match="non-empty"):
+        ExclusionGate.load(tmp_path)
+
+
+def test_valid_also_match_still_compiles(tmp_path: Path) -> None:
+    """Non-empty aliases still work after the empty-string guard is added."""
+    _write_exclusions(
+        tmp_path,
+        {
+            "chat": {
+                "s": [
+                    {"id": "C0X", "tier": "blocked", "also_match": ["real-alias"]}
+                ]
+            }
+        },
+    )
+    _write_whitelist(tmp_path, [])
+    gate = ExclusionGate.load(tmp_path)
+    assert gate.check("s", ChatRef(name="real-alias")) == Decision.BLOCKED
+
+
 # --- local_scan_roots -----------------------------------------------------
 
 
