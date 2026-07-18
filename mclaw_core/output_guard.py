@@ -586,7 +586,13 @@ class OutputGuard:
         than emit an ungated artifact.
         """
         q = self._state_root / "quarantine"
-        q.mkdir(parents=True, exist_ok=True)
+        try:
+            q.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise OutputGuardError(
+                f"cannot create quarantine dir at {q}: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
         try:
             fd = os.open(str(q), os.O_NOFOLLOW | os.O_DIRECTORY)
         except OSError as exc:
@@ -646,9 +652,11 @@ class OutputGuard:
                 tmp_path.unlink()
             except FileNotFoundError:
                 pass
-        # 0600 on the file (the temp inherits the dir's 0700 umask-reduced
-        # mode; tighten to 0600 explicitly so the artifact body is not
-        # world/group-readable even on shared systems).
+        # 0600 on the destination. ``tempfile.mkstemp`` already creates files
+        # at 0600 by default (independent of the dir's mode); the explicit
+        # ``chmod`` makes that guarantee hard rather than relying on the
+        # default, so the artifact body is never world/group-readable even on
+        # shared systems where a umask or future stdlib change could shift it.
         os.chmod(dest, 0o600)
         return dest
 

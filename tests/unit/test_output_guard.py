@@ -131,7 +131,11 @@ def test_blocked_id_trips_persistence(tmp_path: Path) -> None:
     text = f"Hey everyone in {_BLOCKED_ID}, the agenda is attached."
     result = guard.scan(text, surface=Surface.PERSISTENCE, artifact_name="brief.md")
     assert isinstance(result, Trip)
-    assert _BLOCKED_ID not in result.pattern_id or "C0HRCHAN" in result.pattern_id
+    # The blocked entry's id appears in the pattern_id (the trip traces back to
+    # the exact exclusions.yaml entry that fired). The prior form
+    # ``_BLOCKED_ID not in ... or _BLOCKED_ID in ...`` was a tautology — always
+    # True — and never asserted anything.
+    assert _BLOCKED_ID in result.pattern_id
     assert result.artifact_name == "brief.md"
 
 
@@ -495,6 +499,41 @@ def test_quarantine_files_are_0600(tmp_path: Path) -> None:
     q_path = guard.on_trip(trip, content="secret body")
     mode = q_path.stat().st_mode & 0o777
     assert mode == 0o600, f"quarantined file expected 0600, got {oct(mode)}"
+
+
+def test_on_trip_refuses_symlink_quarantine_dir(tmp_path: Path) -> None:
+    """A symlink at ``state/quarantine`` is refused (fail-closed, §5.4).
+
+    ``_quarantine_dir`` advertises ``O_NOFOLLOW | O_DIRECTORY`` symlink refusal
+    as a fail-closed measure: an attacker (or a misconfigured sync tool) who
+    can plant a symlink at the quarantine root must not trick the guard into
+    writing the tripped artifact through it to an attacker-controlled dir.
+    ``on_trip`` must raise :class:`OutputGuardError` and write nothing.
+    """
+    guard = _guard_with(tmp_path, exclusions=_two_tier_chat_exclusions())
+    # Plant a symlink at state/quarantine pointing at an attacker-controlled
+    # dir. _guard_with pre-mkdirs state_root but NOT quarantine, so the link
+    # is the quarantine root the guard will resolve on its first trip.
+    target = tmp_path / "attacker-controlled"
+    target.mkdir()
+    link = tmp_path / "state" / "quarantine"
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot create symlink in test tmp_path here: {exc}")
+    # Sanity: the link resolves as a dir (so mkdir(exist_ok=True) will NOT be
+    # the branch that catches the attack — O_NOFOLLOW at open must).
+    assert link.is_dir()
+
+    trip = Trip(pattern_id="x", artifact_name="y.md")
+    with pytest.raises(OutputGuardError):
+        guard.on_trip(trip, content="blocked body")
+
+    # The artifact must NOT have been written through the symlink.
+    assert not any(target.iterdir()), (
+        "guard wrote through the symlinked quarantine dir — O_NOFOLLOW refusal "
+        "did not fire"
+    )
 
 
 # --- Fail-closed on the guard's own error paths ---------------------------

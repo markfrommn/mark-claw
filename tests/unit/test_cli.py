@@ -563,6 +563,41 @@ def test_guard_bare_no_subaction_is_nonzero_stub(capsys) -> None:
     assert "not implemented" in err
 
 
+def test_guard_scan_vault_construction_failure_exits_nonzero(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    """``guard scan-vault`` exits 1 on guard construction failure (§B4).
+
+    The scan's own contract distinguishes "0 findings → exit 0" (informational
+    spot-check) from "guard construction failure → exit 1" (a broken
+    ``exclusions.yaml`` means the guard cannot compile a fail-closed policy —
+    the operator must fix config before the spot-check is meaningful). The
+    empty/clean/findings paths cover exit 0; this test covers the exit-1 path
+    via a malformed ``exclusions.yaml`` (an entry with an unknown tier).
+    """
+    cfg, _ = _xdg(monkeypatch, tmp_path)
+    _stub_keychain_reachable(monkeypatch)
+    cli.main(["doctor", "--init"])  # skeleton config + state
+    capsys.readouterr()
+
+    # A configured vault that exists as a dir — required so the scan reaches
+    # guard construction (no vault short-circuits to "0 findings", exit 0).
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    _write_valid_settings(cfg / "mark-claw" / "mark" / "settings.yaml", str(vault))
+
+    # Malformed exclusions: an unknown tier value fails at construction.
+    (cfg / "mark-claw" / "mark" / "exclusions.yaml").write_text(
+        "chat:\n  s:\n    - {id: X, tier: secret}\n", encoding="utf-8"
+    )
+
+    rc = cli.main(["guard", "scan-vault"])
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "guard scan-vault" in err
+    assert "cannot compile guard" in err
+
+
 def test_secret_get_dispatches(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         "mclaw_core.secret.get_secret",
