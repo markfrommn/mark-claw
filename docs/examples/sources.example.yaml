@@ -1,0 +1,31 @@
+# Example mark-claw chat + activity sources.
+# Copy to ~/.config/mark-claw/<profile>/sources.yaml and replace the
+# placeholders. Placeholder values ONLY — no real identifiers in this repo.
+# Schema: design §6.1.
+
+chat:
+  slack-work:
+    token_ref: "keychain://mark-claw-<profile>/slack-xoxp"
+    channels: []              # optional; empty = auto-discover
+  mattermost-work:
+    url: "https://mm.your-domain.example"
+    token_ref: "keychain://mark-claw-<profile>/mm-pat"
+  telegram:
+    api_id_ref: "keychain://mark-claw-<profile>/tg-api_id"
+    api_hash_ref: "keychain://mark-claw-<profile>/tg-api_hash"
+    session: "$STATE/secrets/telegram/session.string"
+  signal:
+    data_dir: "$STATE/secrets/signal-cli/"
+
+activity:
+  github:
+    token_ref: "keychain://mark-claw-<profile>/github-pat"
+  figma:
+    token_ref: "keychain://mark-claw-<profile>/figma-pat"
+  zoom:
+    account_id: "zoom-account-id-placeholder"
+    client_ref: "keychain://mark-claw-<profile>/zoom-client_secret"
+  meet:
+    transcripts_folder: "drive:/transcripts-folder-id-placeholder"
+  local:
+    # scan_roots are read ONLY from local-whitelist.yaml — never here.

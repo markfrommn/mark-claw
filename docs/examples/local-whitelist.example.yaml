@@ -1,0 +1,7 @@
+# Example mark-claw local scan whitelist.
+# Copy to ~/.config/mark-claw/<profile>/local-whitelist.yaml and replace the
+# placeholders. This is the ONLY source of local scan paths — no code path
+# accepts a root argument. Schema: design §5.2, §6.1.
+
+scan_roots:
+  - /Users/you/Projects/your-repo
