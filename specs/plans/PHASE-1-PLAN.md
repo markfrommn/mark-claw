@@ -338,7 +338,13 @@ uv run mclaw test --canary        # green
 grep -r "MCX-CANARY" tests/canary/tmp/output/ | wc -l    # 0
 # mutate the gate to always-ALLOW in a scratch branch → canary goes red (proves the test bites)
 ```
-- [ ] Done · Linear: [DEV-16](https://linear.app/psols/issue/DEV-16)
+- [x] Done · Linear: [DEV-16](https://linear.app/psols/issue/DEV-16)
+
+**Deviation (DEV-16, 2026-07-18):** No real shared fetch base or ingest writers
+exist until DEV-19+, so the canary exercises their required enumerate → gate →
+fetch → emit contract through bounded mocked providers. GitHub Actions path
+protection runs the canary for `mclaw_core/`, `bin/`, and future `writers/`
+changes; this foundation repo has no pre-commit framework to wire locally.
 
 ### B6 — Author the real exclusions + local whitelist (gate live before first fetch)
 **Lands:** config only (`exclusions.yaml`, `local-whitelist.yaml`) — Mark authors, assistant assists with ID lookup (channel IDs via A4/A5 tokens, folder paths, contacts).
