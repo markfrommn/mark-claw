@@ -279,7 +279,9 @@ uv run pytest tests/hygiene # green (patterns file present) — finds 0 personal
 git ls-files | xargs grep -l "powderhorns\|jumpweb\|convoydefense\|markfrommn" | grep -v specs/  # empty
 ```
 *(specs/ is exempt — it predates the split and is Mark's own repo; flag if he wants specs scrubbed too.)*
-- [ ] Done · Linear: [DEV-12](https://linear.app/psols/issue/DEV-12)
+
+**Deviation (DEV-12, 2026-07-18):** the `auth {google,graph,telegram}` helpers were **carved out to a follow-on issue, [DEV-31](https://linear.app/psols/issue/DEV-31)** (P1-B1b), per the sanctioned split above — `auth` ships as a stub here. Rationale: the three flows cannot be completed or integration-tested until the config schema (B2/DEV-13) and the provider console halves (A2/A3/A6) exist, and nothing on the tooling critical path needs them. DEV-31 is `blockedBy` DEV-12 + DEV-13 and `blocks` DEV-6/7/10 (re-pointed off DEV-12's direct blocker). Two smaller deviations: the hygiene guard exempts the cwft-managed scaffolding as well as `specs/` (see `specs/STACK-CLEANUP-NOTES.md` → "Personal identifiers rendered into generated surfaces"), and the `mc` → `mclaw` rename is reflected throughout.
+- [x] Done · Linear: [DEV-12](https://linear.app/psols/issue/DEV-12)
 
 ### B2 — Config + state trees, `mark` profile
 **Lands:** config (`~/.config/mark-claw/mark/`: `settings.yaml`, `accounts.yaml`, `sources.yaml`, skeleton `exclusions.yaml`, `local-whitelist.yaml`, `hygiene-patterns.txt`) · state (`~/.local/state/mark-claw/mark/`: `cursors/ spool/ runs/ contacts/ changelog/ quarantine/ secrets/ locks/ logs/` — `secrets/`, `quarantine/`, `spool/ephemeral/` 0700) · repo (`mclaw doctor` validation logic + example config files under `docs/examples/` with placeholder values only).

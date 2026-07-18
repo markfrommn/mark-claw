@@ -58,6 +58,27 @@ corrections belong upstream and will arrive through `cwft ai refresh`.
   than selected Mark-Claw technologies unless a rendered rule explicitly promotes one to a repo
   requirement.
 
+## Personal identifiers rendered into generated surfaces
+
+Distinct from the foreign-stack assumptions above: a cwft setting renders a personal identifier
+into a generated tooling file, outside the accepted `specs/` exception, where it cannot be
+hand-scrubbed.
+
+- **`coauthor_email` → generated agent files.** `coauthor_email: noreply@powderhorns.biz`
+  (`.cwft-settings.yaml`) renders into generated files — e.g. `.claude/agents/common-developer.md`
+  embeds `Co-Authored-By: Common Workflow Agent <noreply@powderhorns.biz>`. The domain is Mark's and
+  surfaces in a generated file; `.claude/agents/*` is cwft-generated and the value comes from the
+  `.cwft-settings.yaml` source, so it is fixed upstream, not locally. Upstream fix (Mark's call):
+  genericize the default `coauthor_email` so no personal domain renders, or confirm it as accepted
+  repo-identity and leave it. `github_org: markfrommn` / `npm_scope: "@markfrommn"` are legitimate
+  repo-identity config (this repo is `github.com/markfrommn/mark-claw`), not contamination — noted,
+  no change proposed.
+- **In-repo handling (DEV-12).** The `tests/hygiene/` personal-data guard exempts the cwft-managed
+  scaffolding (`specs/`, `.cwft-settings.yaml`, `.cwft-ai-manifest.json`, `.claude/`, `.cursor/`,
+  `.vscode/`, `AGENTS.md`, `GEMINI.md`) so a repo-identity value in a generated file does not fail the
+  guard; the guard stays live for the hand-authored tooling surface (`mclaw_core/`, `bin/`,
+  `prompts/`, `tests/`, `docs/`, `pyproject.toml`, …).
+
 ## Upstream acceptance criteria
 
 - Rendering the Mark-Claw `python-uv` profile produces zero references to Prefect, Postgres,
@@ -67,4 +88,6 @@ corrections belong upstream and will arrive through `cwft ai refresh`.
   for authority docs, gates, generated surfaces, runtime verification, network posture, and storage
   architecture.
 - A profile can select strict one-issue/one-PR mode and a no-repo execution path.
+- Rendering the profile puts no personal identifier (e.g. a personal `coauthor_email` domain) into a
+  generated file, or the value is a documented, accepted repo-identity setting.
 - `cwft ai refresh` reproduces corrected artifacts without local edits or drift.
