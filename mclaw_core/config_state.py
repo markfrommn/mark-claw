@@ -13,6 +13,8 @@ content is operator-authored in later units.
 
 from __future__ import annotations
 
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -216,24 +218,77 @@ class StateInitError(Exception):
     """Raised when state init refuses to trust an unsafe path.
 
     A symlink placed at one of the fail-closed secure dirs (``secrets``,
-    ``quarantine``, ``spool/ephemeral``) would be followed by ``is_dir`` /
-    ``mkdir(exist_ok=True)`` / ``stat`` / ``chmod``, so init would treat the
-    link's target as a valid secure dir, apply ``chmod(0700)`` to an arbitrary
-    directory outside the state tree, and let future secret/quarantine/ephemeral
-    writes follow the link. Init fails closed instead.
+    ``quarantine``, ``spool/ephemeral``) is rejected by anchoring to the
+    directory with ``os.open(O_NOFOLLOW | O_DIRECTORY)`` before any mode read
+    or chmod: ``O_NOFOLLOW`` atomically refuses a symlink at the final
+    component, so neither ``fstat`` nor ``fchmod`` resolves the link. The older
+    ``is_symlink()``-then-``chmod`` sequence was itself a TOCTOU (a link could
+    appear between the check and the chmod and have its target mutated to
+    ``0700``); the fd-anchored path operates on a single inode and cannot
+    follow a link. Init fails closed instead.
     """
+
+
+def _atomic_publish(path: Path, content: str) -> str:
+    """Write ``content`` to ``path`` atomically; never overwrite an existing file.
+
+    Returns ``"created"`` if a new file was linked into place, or ``"reused"``
+    if ``path`` already existed (the operator's bytes win).
+
+    Atomic + self-recovering:
+
+    * Write to a **unique** temp in the SAME directory (so the final link is on
+      the same filesystem) via :func:`tempfile.mkstemp` — uniqueness means
+      concurrent or stale temps from a prior interrupted run never collide.
+    * ``os.write`` + ``os.fsync`` + ``os.close`` (only the temp is touched
+      in flight).
+    * Publish with :func:`os.link` (NOT :func:`os.replace`) — ``link`` fails
+      with :class:`FileExistsError` if the destination exists, preserving the
+      non-overwrite guarantee. The operator's file always wins.
+    * ``finally:`` unlink the temp (guarded against ``FileNotFoundError``).
+
+    The destination is never partially written: only the temp is written in
+    flight, and it is only linked into place after a full write+fsync. An
+    interrupted run (crash, disk full) leaves at worst a truncated *temp*,
+    never a truncated destination — and the next run creates a fresh unique
+    temp and links the correct content, so the destination self-heals rather
+    than being reused as a truncated file (the failure mode of the old
+    exclusive-open write, which put the in-flight bytes directly at the
+    destination).
+    """
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent))
+    tmp_path = Path(tmp_name)
+    try:
+        try:
+            os.write(fd, content.encode("utf-8"))
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        try:
+            os.link(str(tmp_path), path)
+        except FileExistsError:
+            return "reused"
+        return "created"
+    finally:
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            # Defensive: mkstemp created the temp, so it normally exists here.
+            # Guarded so the finally never masks the real outcome.
+            pass
 
 
 def init_config_tree(*, profile: str) -> InitResult:
     """Create skeleton config files under the profile config root.
 
     Non-destructive: a file that already exists is **never** overwritten —
-    config is human-authored. Creation is atomic via exclusive-open (mode
-    ``"x"``): the prior check-then-write (``exists()`` → ``write_text``, which
-    opens in truncating ``"w"`` mode) was a TOCTOU race that could clobber a
-    file appearing between the check and the write. With ``"x"`` the open
-    itself fails atomically if the path already exists, and the existing bytes
-    are left untouched. Parent directories are created as needed.
+    config is human-authored. Each skeleton is written via
+    :func:`_atomic_publish` (unique temp + ``fsync`` + hard-link in the same
+    directory), so the destination is either the operator's untouched bytes
+    (``reused``) or a fully-``fsync``'d skeleton linked into place
+    (``created``) — never a partially-written file. An interrupted write leaves
+    at worst a truncated *temp*, and the next run produces the correct
+    destination (self-recovering). Parent directories are created as needed.
     """
     root = paths.config_root(profile)
     created: list[Path] = []
@@ -241,14 +296,67 @@ def init_config_tree(*, profile: str) -> InitResult:
     for name, content in CONFIG_SKELETONS.items():
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            with path.open("x") as f:
-                f.write(content)
-        except FileExistsError:
+        outcome = _atomic_publish(path, content)
+        if outcome == "created":
+            created.append(path)
+        else:
             reused.append(path)
-            continue
-        created.append(path)
     return InitResult(created=created, reused=reused, fixed_perms=[])
+
+
+def _init_state_dir(
+    path: Path, target_mode: int, rel: str, *, secure: bool
+) -> str:
+    """Create one state dir if missing, enforce ``target_mode``; return outcome.
+
+    Returns ``"created"`` (newly created, mode set), ``"reused"`` (existed with
+    the right mode already), or ``"fixed_perms"`` (pre-existed but the mode was
+    just corrected).
+
+    For secure dirs (:data:`SECURE_DIRS` — the fail-closed guarantee dirs),
+    anchor to the directory with ``os.open(O_NOFOLLOW | O_DIRECTORY)`` after
+    ``mkdir``: ``O_NOFOLLOW`` atomically refuses a symlink at the final
+    component (raises ``OSError``/``ELOOP``), and both the mode read (``fstat``)
+    and the chmod (``fchmod``) operate on that same fd. Validation and mode
+    enforcement thus share one inode rather than re-resolving the pathname —
+    closing the ``is_symlink()``-then-``chmod`` TOCTOU (a symlink appearing
+    between the check and the chmod would otherwise follow the link and mutate
+    an arbitrary target directory outside the state tree). On a symlinked
+    secure dir, raises :class:`StateInitError` — neither ``fstat`` nor
+    ``fchmod`` follows the link. ``mkdir(parents=True, exist_ok=True)`` may
+    no-op on a symlink-to-dir, but it mutates nothing; the ``O_NOFOLLOW`` open
+    is what catches the link.
+
+    Non-secure dirs use the pathname-resolving ``stat``/``chmod`` (the
+    fail-closed guard is scoped to secure dirs only — see
+    :data:`SECURE_DIRS`).
+    """
+    existed = path.is_dir()
+    path.mkdir(parents=True, exist_ok=True)
+    if secure:
+        try:
+            fd = os.open(str(path), os.O_NOFOLLOW | os.O_DIRECTORY)
+        except OSError as exc:
+            raise StateInitError(
+                f"refusing to init {path}: a symlink at a fail-closed secure "
+                f"dir ({rel!r}) is not trusted (stat/chmod would follow the "
+                f"link and mutate its target)"
+            ) from exc
+        try:
+            cur_mode = os.fstat(fd).st_mode & 0o777
+            mode_changed = cur_mode != target_mode
+            if mode_changed:
+                os.fchmod(fd, target_mode)
+        finally:
+            os.close(fd)
+    else:
+        cur_mode = path.stat().st_mode & 0o777
+        mode_changed = cur_mode != target_mode
+        if mode_changed:
+            path.chmod(target_mode)
+    if mode_changed:
+        return "fixed_perms" if existed else "created"
+    return "reused" if existed else "created"
 
 
 def init_state_tree(*, profile: str) -> InitResult:
@@ -258,15 +366,16 @@ def init_state_tree(*, profile: str) -> InitResult:
     the required mode (0700 for secure dirs, 0755 otherwise). ``mkdir``'s own
     ``mode`` argument is reduced by the process umask, so the explicit ``chmod``
     after creation is what actually guarantees the bits — a widened secure dir
-    is corrected back to 0700 on the next init.
+    is corrected back to 0700 on the next init. A mode correction via
+    ``fchmod`` on a pre-existing secure dir still counts as ``fixed_perms``.
 
     Fail-closed guarantee: a symlink at one of :data:`SECURE_DIRS` is refused
-    with :class:`StateInitError` rather than followed. ``is_dir`` /
-    ``mkdir(exist_ok=True)`` / ``stat`` / ``chmod`` all resolve a symlink, so a
-    link at ``secrets``/``quarantine``/``spool/ephemeral`` would otherwise let
-    init ``chmod(0700)`` the link's target (an arbitrary directory outside the
-    state tree) and let future writes follow it. Non-secure dirs are unaffected
-    (out of scope).
+    with :class:`StateInitError` rather than followed. Each secure dir is
+    anchored with ``os.open(O_NOFOLLOW | O_DIRECTORY)`` so the mode read and
+    chmod operate on a single inode and never resolve a symlink — the older
+    ``is_symlink()`` pre-check was itself a TOCTOU (a link could appear between
+    the check and the ``chmod`` and have its target mutated to ``0700``).
+    Non-secure dirs are unaffected (out of scope).
     """
     root = paths.state_root(profile)
     created: list[Path] = []
@@ -275,23 +384,13 @@ def init_state_tree(*, profile: str) -> InitResult:
     for rel in STATE_DIRS:
         path = root / rel
         target_mode = SECURE_DIR_MODE if rel in SECURE_DIRS else DEFAULT_DIR_MODE
-        if rel in SECURE_DIRS and path.is_symlink():
-            raise StateInitError(
-                f"refusing to init {path}: a symlink at a fail-closed secure "
-                f"dir ({rel!r}) is not trusted (stat/chmod would follow the "
-                f"link and mutate its target)"
-            )
-        existed = path.is_dir()
-        path.mkdir(parents=True, exist_ok=True)
-        cur_mode = path.stat().st_mode & 0o777
-        if cur_mode != target_mode:
-            path.chmod(target_mode)
-            if existed:
-                fixed_perms.append(path)
-            else:
-                created.append(path)
-        elif existed:
+        outcome = _init_state_dir(
+            path, target_mode, rel, secure=rel in SECURE_DIRS
+        )
+        if outcome == "created":
+            created.append(path)
+        elif outcome == "reused":
             reused.append(path)
         else:
-            created.append(path)
+            fixed_perms.append(path)
     return InitResult(created=created, reused=reused, fixed_perms=fixed_perms)

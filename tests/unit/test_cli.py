@@ -437,7 +437,9 @@ def test_doctor_secure_dir_symlink_is_hard_fail(
     """A symlink at a fail-closed secure dir (``secrets/``) must FAIL the
     ``perms secrets/`` check hard and exit nonzero — the doctor must not follow
     the link (no chmod on the target, no treating the target as a valid secure
-    dir)."""
+    dir). The ``O_NOFOLLOW`` anchor refuses the symlink at the final component;
+    the mode read never resolves the link, and the target's mode is left
+    unchanged."""
     cfg, st = _xdg(monkeypatch, tmp_path)
     _stub_keychain_reachable(monkeypatch)
     cli.main(["doctor", "--init"])  # scaffold real state tree
@@ -449,13 +451,17 @@ def test_doctor_secure_dir_symlink_is_hard_fail(
     target = tmp_path / "attacker-controlled"
     target.mkdir()
     (st_root / "secrets").symlink_to(target)
+    # Pin the target to a non-0700 mode explicitly so the unchanged assertion
+    # below is rigorous (proves the doctor never fchmod'd the link's target).
+    target.chmod(0o755)
     rc = cli.main(["doctor"])
     out = capsys.readouterr().out
     assert rc == 1
     assert "perms secrets/" in out
     assert "FAIL" in out
     assert "symlink" in out
-    # The target's mode must NOT have been mutated to 0700 by the doctor check.
+    # The target's mode must be unchanged (still 0o755, NOT mutated to 0700).
+    assert (target.stat().st_mode & 0o777) == 0o755
     assert (target.stat().st_mode & 0o777) != 0o700
 
 

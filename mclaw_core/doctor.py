@@ -31,6 +31,7 @@ and exit 0 — the pre-init state is expected, and the hint points at ``--init``
 
 from __future__ import annotations
 
+import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -229,19 +230,30 @@ def _check_perm(
     report: DoctorReport, path: Path, rel: str, want_mode: int
 ) -> None:
     label = f"perms {rel}/ ({oct(want_mode)[2:]})"
-    if path.is_symlink():
-        # A symlink at a fail-closed secure dir would be followed by stat/chmod,
-        # comparing and mutating the link's *target* (an arbitrary directory
-        # outside the state tree) and letting future secret/quarantine/ephemeral
-        # writes follow the link. Refuse to trust it.
+    # Pre-check for "missing" so that case gets a clear detail line. TOCTOU
+    # here is harmless: the doctor reports and never mutates, and the
+    # ``O_NOFOLLOW`` open below is what guarantees the mode read never follows
+    # a symlink.
+    if not path.exists() and not path.is_symlink():
+        report.checks.append(Check(label, STATUS_FAIL, "missing"))
+        return
+    # Anchor to the dir via ``O_NOFOLLOW | O_DIRECTORY`` (refuses a symlink at
+    # the final component atomically) and read the mode via ``fstat`` on that
+    # fd — the comparison never resolves a link. The doctor reports; it does
+    # not chmod, so a single ``fstat`` is enough. ``ELOOP`` (symlink) or
+    # ``ENOTDIR`` (regular file at this path) → not trusted as a fail-closed
+    # secure directory.
+    try:
+        fd = os.open(str(path), os.O_NOFOLLOW | os.O_DIRECTORY)
+    except OSError:
         report.checks.append(
             Check(label, STATUS_FAIL, "is a symlink — not trusted")
         )
         return
-    if not path.is_dir():
-        report.checks.append(Check(label, STATUS_FAIL, "missing"))
-        return
-    cur = path.stat().st_mode & 0o777
+    try:
+        cur = os.fstat(fd).st_mode & 0o777
+    finally:
+        os.close(fd)
     if cur == want_mode:
         report.checks.append(Check(label, STATUS_OK))
     else:

@@ -76,6 +76,53 @@ def test_init_config_idempotent_second_pass_all_reused(
     assert {p.name for p in second.reused} == set(config_state.CONFIG_SKELETONS)
 
 
+def test_init_config_atomic_no_tmp_remnants(monkeypatch, tmp_path) -> None:
+    """After init, no temp remnants remain in the config root and each skeleton
+    equals its expected content byte-for-byte. Each skeleton is written to a
+    unique temp, fsync'd, hard-linked into place, then the temp unlinked — so
+    only the known skeletons are left."""
+    _xdg(monkeypatch, tmp_path)
+    config_state.init_config_tree(profile="mark")
+    root = paths.config_root("mark")
+    # Every entry in the config root must be a known skeleton (no tmp remnants).
+    files = {p.name for p in root.iterdir()}
+    assert files == set(config_state.CONFIG_SKELETONS), (
+        f"unexpected files in config root: "
+        f"{files - set(config_state.CONFIG_SKELETONS)}"
+    )
+    # Each skeleton's bytes match exactly (atomic publish, no truncation).
+    for name, content in config_state.CONFIG_SKELETONS.items():
+        assert (root / name).read_bytes() == content.encode("utf-8"), name
+
+
+def test_init_config_self_recovers_with_stale_temp(
+    monkeypatch, tmp_path
+) -> None:
+    """A stale temp from a prior interrupted run must not block or corrupt the
+    next init. ``mkstemp`` yields a unique temp name per call, so the stale
+    temp is not touched; init writes its own fresh temp and links it into
+    place. The destination is correct (self-recovering): it is only ever
+    produced by a full write+fsync+link, never a partial write at the
+    destination."""
+    _xdg(monkeypatch, tmp_path)
+    root = paths.config_root("mark")
+    root.mkdir(parents=True)
+    # Simulate a stale temp from a prior interrupted init.
+    stale = root / "tmpSTALE-from-prior-run"
+    stale.write_bytes(b"\x00partial broken content")
+    config_state.init_config_tree(profile="mark")
+    # Destination is correct, not blocked by the stale temp.
+    assert (
+        (root / "settings.yaml").read_text()
+        == config_state.CONFIG_SKELETONS["settings.yaml"]
+    )
+    # Init's own temp is gone; only skeletons + the orphaned stale temp remain.
+    # (A janitor could sweep tmp* files; init only unlinks its own temp.)
+    files = {p.name for p in root.iterdir()}
+    assert "tmpSTALE-from-prior-run" in files  # orphaned, not ours to clean
+    assert files - {"tmpSTALE-from-prior-run"} == set(config_state.CONFIG_SKELETONS)
+
+
 def test_skeletons_are_yaml_parseable(monkeypatch, tmp_path) -> None:
     """Every YAML skeleton must parse as a mapping with its required keys.
 
