@@ -219,12 +219,23 @@ def _as_list(value: object, *, context: str) -> list[object]:
 
 
 def _opt_str(value: object, *, key: str, context: str) -> str | None:
-    """Narrow an optional string field; ``None`` (absent key) passes through."""
+    """Narrow an optional string field; ``None`` (absent key) passes through.
+
+    A present-but-empty string is rejected: an empty ``id`` / ``name`` /
+    ``series_id`` compiles an entry that can never usefully match, and an
+    empty ``title`` is worse — ``"" in ref.title.casefold()`` is ``True`` for
+    every titled meeting, so one such entry would silently become a global
+    block. Reject at load rather than degrade the guarantee.
+    """
     if value is None:
         return None
     if not isinstance(value, str):
         raise ExclusionConfigError(
             f"{context}: '{key}' must be a string, got {type(value).__name__}"
+        )
+    if not value:
+        raise ExclusionConfigError(
+            f"{context}: '{key}' must be a non-empty string"
         )
     return value
 
@@ -310,10 +321,22 @@ def _compile_chat(top: dict[str, object]) -> dict[str, tuple[_ChatEntry, ...]]:
             - {id: "C0...", name: "#...", tier: blocked, also_match: ["..."]}
 
     Returns a mapping ``source_id → tuple[_ChatEntry, ...]``. An absent
-    ``chat`` key or an empty mapping yields ``{}``. Every entry's tier is
-    validated here, so a malformed tier fails the whole load (fail-closed).
+    ``chat`` key or an empty mapping yields ``{}``. A **present-but-null**
+    ``chat:`` (a YAML dangling key — e.g. an indented entry whose parent
+    collapsed) is malformed and raises: it would otherwise compile to "no
+    chat exclusions" and silently disable protection the operator intended.
+    Every entry's tier is validated here, so a malformed tier fails the
+    whole load (fail-closed).
     """
-    chat_map = _as_mapping(top.get("chat"), context="exclusions.yaml: chat")
+    if "chat" not in top:
+        return {}
+    raw = top["chat"]
+    if raw is None:
+        raise ExclusionConfigError(
+            "exclusions.yaml: 'chat' must be a mapping, got null "
+            "(a present section must be a mapping; remove the key if unused)"
+        )
+    chat_map = _as_mapping(raw, context="exclusions.yaml: chat")
     result: dict[str, tuple[_ChatEntry, ...]] = {}
     for source_id, entries_raw in chat_map.items():
         ctx = f"exclusions.yaml: chat[{source_id!r}]"
@@ -357,12 +380,23 @@ def _compile_drive(top: dict[str, object]) -> dict[str, tuple[_DriveEntry, ...]]
           <account-id>:
             - {path: "/HR/", tier: blocked}   # prefix; inherits to subfolders
 
-    Returns ``account_id → tuple[_DriveEntry, ...]``. Each entry's ``path`` is
-    normalized to a :class:`PurePosixPath` (which collapses redundant trailing
-    separators — ``/HR/`` and ``/HR`` compare equal) for the segment-aware
-    ancestry check in :meth:`ExclusionGate._check_drive`.
+    Returns ``account_id → tuple[_DriveEntry, ...]``. An absent ``drive`` key
+    or an empty mapping yields ``{}``. A **present-but-null** ``drive:`` is
+    malformed and raises (same rationale as :func:`_compile_chat`). Each
+    entry's ``path`` is normalized to a :class:`PurePosixPath` (which
+    collapses redundant trailing separators — ``/HR/`` and ``/HR`` compare
+    equal) for the segment-aware ancestry check in
+    :meth:`ExclusionGate._check_drive`.
     """
-    drive_map = _as_mapping(top.get("drive"), context="exclusions.yaml: drive")
+    if "drive" not in top:
+        return {}
+    raw = top["drive"]
+    if raw is None:
+        raise ExclusionConfigError(
+            "exclusions.yaml: 'drive' must be a mapping, got null "
+            "(a present section must be a mapping; remove the key if unused)"
+        )
+    drive_map = _as_mapping(raw, context="exclusions.yaml: drive")
     result: dict[str, tuple[_DriveEntry, ...]] = {}
     for account_id, entries_raw in drive_map.items():
         ctx = f"exclusions.yaml: drive[{account_id!r}]"
@@ -392,12 +426,22 @@ def _compile_meetings(top: dict[str, object]) -> tuple[_MeetingEntry, ...]:
           - {series_id: "abc123", title: "Comp review", tier: blocked}
 
     The list is flat (not keyed by source) — a meeting matches across all
-    calendars. Returns a tuple of compiled entries. ``series_id`` is optional
-    per entry only insofar as the operator may rely on the title-pattern
-    fallback alone; the title is matched as a case-insensitive substring of
-    the caller's ``MeetingRef.title``.
+    calendars. Returns a tuple of compiled entries. An absent ``meetings``
+    key or an empty list yields ``()``. A **present-but-null** ``meetings:``
+    is malformed and raises (same rationale as :func:`_compile_chat`).
+    ``series_id`` is optional per entry only insofar as the operator may rely
+    on the title-pattern fallback alone; the title is matched as a
+    case-insensitive substring of the caller's ``MeetingRef.title``.
     """
-    meetings_list = _as_list(top.get("meetings"), context="exclusions.yaml: meetings")
+    if "meetings" not in top:
+        return ()
+    raw = top["meetings"]
+    if raw is None:
+        raise ExclusionConfigError(
+            "exclusions.yaml: 'meetings' must be a list, got null "
+            "(a present section must be a list; remove the key if unused)"
+        )
+    meetings_list = _as_list(raw, context="exclusions.yaml: meetings")
     compiled: list[_MeetingEntry] = []
     for i, entry_raw in enumerate(meetings_list):
         entry_ctx = f"exclusions.yaml: meetings[{i}]"

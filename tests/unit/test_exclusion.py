@@ -556,6 +556,98 @@ def test_top_level_non_mapping_exclusions_raises(tmp_path: Path) -> None:
         ExclusionGate.load(tmp_path)
 
 
+# --- present-but-null section guards (Macroscope review fix 1) ------------
+
+
+def test_null_chat_section_raises(tmp_path: Path) -> None:
+    """A present-but-null ``chat:`` (a YAML dangling key) is malformed — it
+    silently means "no chat exclusions" and disables protection the operator
+    wrote an (indented) entry for. Fail loud at load."""
+    _write_exclusions(tmp_path, {"chat": None})
+    _write_whitelist(tmp_path, [])
+    with pytest.raises(ExclusionConfigError, match="'chat'"):
+        ExclusionGate.load(tmp_path)
+
+
+def test_null_drive_section_raises(tmp_path: Path) -> None:
+    """A present-but-null ``drive:`` is malformed — fail loud at load."""
+    _write_exclusions(tmp_path, {"drive": None})
+    _write_whitelist(tmp_path, [])
+    with pytest.raises(ExclusionConfigError, match="'drive'"):
+        ExclusionGate.load(tmp_path)
+
+
+def test_null_meetings_section_raises(tmp_path: Path) -> None:
+    """A present-but-null ``meetings:`` is malformed — fail loud at load."""
+    _write_exclusions(tmp_path, {"meetings": None})
+    _write_whitelist(tmp_path, [])
+    with pytest.raises(ExclusionConfigError, match="'meetings'"):
+        ExclusionGate.load(tmp_path)
+
+
+def test_absent_sections_load_cleanly(tmp_path: Path) -> None:
+    """A config with only ``drive:`` (no ``chat:``/``meetings:`` keys) must
+    still load — an *absent* section is a valid "no exclusions for that
+    section" and must NOT be rejected by the present-but-null guard. This
+    test pins that the guard distinguishes absence (valid) from null
+    (malformed) and guards against over-tightening."""
+    _write_exclusions(
+        tmp_path, {"drive": {"gdrive-work": [{"path": "/HR", "tier": "blocked"}]}}
+    )
+    _write_whitelist(tmp_path, [])
+    gate = ExclusionGate.load(tmp_path)
+    assert gate.check("any", ChatRef(id="x")) == Decision.ALLOW
+    assert gate.check("any", MeetingRef(series_id="x")) == Decision.ALLOW
+    # Drive exclusions still applied.
+    assert gate.check("gdrive-work", DriveRef(path="/HR")) == Decision.BLOCKED
+
+
+# --- empty-string identifier guards (Macroscope review fix 2) ------------
+
+
+def test_empty_chat_id_raises(tmp_path: Path) -> None:
+    """An empty-string ``id`` is a malformed entry — reject at load rather
+    than silently compile an entry that can never match."""
+    _write_exclusions(
+        tmp_path, {"chat": {"s": [{"id": "", "tier": "blocked"}]}}
+    )
+    _write_whitelist(tmp_path, [])
+    with pytest.raises(ExclusionConfigError, match="non-empty"):
+        ExclusionGate.load(tmp_path)
+
+
+def test_empty_chat_name_raises(tmp_path: Path) -> None:
+    """An empty-string ``name`` is a malformed entry — reject at load."""
+    _write_exclusions(
+        tmp_path, {"chat": {"s": [{"name": "", "tier": "blocked"}]}}
+    )
+    _write_whitelist(tmp_path, [])
+    with pytest.raises(ExclusionConfigError, match="non-empty"):
+        ExclusionGate.load(tmp_path)
+
+
+def test_empty_meeting_title_raises(tmp_path: Path) -> None:
+    """An empty-string ``title`` is a malformed entry — the global-match
+    scenario. ``"" in any_string`` is always True, so one such entry would
+    silently block every titled meeting. Reject at load."""
+    _write_exclusions(
+        tmp_path, {"meetings": [{"title": "", "tier": "blocked"}]}
+    )
+    _write_whitelist(tmp_path, [])
+    with pytest.raises(ExclusionConfigError, match="non-empty"):
+        ExclusionGate.load(tmp_path)
+
+
+def test_empty_meeting_series_id_raises(tmp_path: Path) -> None:
+    """An empty-string ``series_id`` is a malformed entry — reject at load."""
+    _write_exclusions(
+        tmp_path, {"meetings": [{"series_id": "", "tier": "blocked"}]}
+    )
+    _write_whitelist(tmp_path, [])
+    with pytest.raises(ExclusionConfigError, match="non-empty"):
+        ExclusionGate.load(tmp_path)
+
+
 # --- local_scan_roots -----------------------------------------------------
 
 
