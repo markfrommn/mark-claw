@@ -8,11 +8,11 @@ fetched or emitted. This is the primary choke point of the two-tier model
 Two structural facts live in this module (§11.1 — "allowlist-over-prompt:
 every hard constraint is a structural fact, not a prompt instruction"):
 
-* ``ExclusionGate`` is the **sole** reader of ``local-whitelist.yaml``. The
-  local scanner obtains its scan roots *only* via
-  :meth:`ExclusionGate.local_scan_roots` — no constructor, ``check`` overload,
-  or other API accepts a root argument, so a code path that scans an unlisted
-  root does not exist.
+* ``ExclusionGate`` is the **sole extractor of scan-root paths** from
+  ``local-whitelist.yaml``. The local scanner obtains its scan roots *only*
+  via :meth:`ExclusionGate.local_scan_roots` — no constructor, ``check``
+  overload, or other API accepts a root argument, so a code path that scans an
+  unlisted root does not exist.
 * Local refs are matched by **whitelist inversion**: an item not under any
   whitelisted root returns :data:`Decision.BLOCKED`. With no whitelist loaded,
   every local ref is blocked — fail-closed for the local source (§5.2).
@@ -323,13 +323,22 @@ def _compile_chat(top: dict[str, object]) -> dict[str, tuple[_ChatEntry, ...]]:
             entry_ctx = f"{ctx}[{i}]"
             entry = _as_mapping(entry_raw, context=entry_ctx)
             tier = _entry_tier(entry, context=entry_ctx)
+            id = _opt_str(entry.get("id"), key="id", context=entry_ctx)
             name = _opt_str(entry.get("name"), key="name", context=entry_ctx)
             aliases = _str_list(
                 entry.get("also_match"), key="also_match", context=entry_ctx
             )
+            # An entry with no identifier can never match any ref — it compiles
+            # but is silently ALLOW-for-everything, masking an operator typo
+            # like ``{tier: blocked}`` missing its identifier. Fail loud.
+            if id is None and name is None and not aliases:
+                raise ExclusionConfigError(
+                    f"{entry_ctx}: an exclusion entry with no id, name, or "
+                    f"also_match can never match — add an identifier"
+                )
             compiled.append(
                 _ChatEntry(
-                    id=_opt_str(entry.get("id"), key="id", context=entry_ctx),
+                    id=id,
                     name_lower=name.casefold() if name is not None else None,
                     aliases_lower=frozenset(a.casefold() for a in aliases),
                     tier=tier,
@@ -394,12 +403,22 @@ def _compile_meetings(top: dict[str, object]) -> tuple[_MeetingEntry, ...]:
         entry_ctx = f"exclusions.yaml: meetings[{i}]"
         entry = _as_mapping(entry_raw, context=entry_ctx)
         tier = _entry_tier(entry, context=entry_ctx)
+        series_id = _opt_str(
+            entry.get("series_id"), key="series_id", context=entry_ctx
+        )
         title = _opt_str(entry.get("title"), key="title", context=entry_ctx)
+        # An entry with neither identifier can never match — the title-pattern
+        # fallback needs a title, and the series/event-id path needs a
+        # series_id. Such an entry is silently ALLOW-for-everything, masking
+        # an operator typo. Fail loud.
+        if series_id is None and title is None:
+            raise ExclusionConfigError(
+                f"{entry_ctx}: a meetings entry with no series_id or title "
+                f"can never match — add an identifier"
+            )
         compiled.append(
             _MeetingEntry(
-                series_id=_opt_str(
-                    entry.get("series_id"), key="series_id", context=entry_ctx
-                ),
+                series_id=series_id,
                 title_lower=title.casefold() if title is not None else None,
                 tier=tier,
             )

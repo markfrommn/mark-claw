@@ -480,6 +480,55 @@ def test_unknown_tier_in_meetings_raises_at_load(tmp_path: Path) -> None:
         ExclusionGate.load(tmp_path)
 
 
+def test_inert_chat_entry_raises_at_load(tmp_path: Path) -> None:
+    """An entry with no id/name/also_match can never match — fail at load.
+
+    Such an entry is silently ALLOW-for-everything (it compiles but no ref
+    ever matches it), which masks an operator typo like ``{tier: blocked}``
+    missing its identifier. The guard surfaces it loudly instead.
+    """
+    _write_exclusions(tmp_path, {"chat": {"slack": [{"tier": "blocked"}]}})
+    _write_whitelist(tmp_path, [])
+    with pytest.raises(ExclusionConfigError, match="no id, name, or also_match"):
+        ExclusionGate.load(tmp_path)
+
+
+def test_chat_entry_with_only_also_match_is_valid(tmp_path: Path) -> None:
+    """An entry with only ``also_match`` (no id/name) is NOT inert — aliases
+    match. Proves the inert-entry guard is specific to fully-inert entries,
+    not entries that have any single identifier."""
+    _write_exclusions(
+        tmp_path,
+        {"chat": {"slack": [{"also_match": ["x"], "tier": "blocked"}]}},
+    )
+    _write_whitelist(tmp_path, [])
+    gate = ExclusionGate.load(tmp_path)
+    assert gate.check("slack", ChatRef(name="x")) == Decision.BLOCKED
+
+
+def test_inert_meeting_entry_raises_at_load(tmp_path: Path) -> None:
+    """A meetings entry with no series_id/title can never match — fail at load."""
+    _write_exclusions(tmp_path, {"meetings": [{"tier": "blocked"}]})
+    _write_whitelist(tmp_path, [])
+    with pytest.raises(ExclusionConfigError, match="no series_id or title"):
+        ExclusionGate.load(tmp_path)
+
+
+def test_meeting_entry_with_only_title_is_valid(tmp_path: Path) -> None:
+    """A meetings entry with only ``title`` (no series_id) is NOT inert — the
+    title-pattern fallback matches. Proves the inert-entry guard is specific
+    to fully-inert entries."""
+    _write_exclusions(
+        tmp_path, {"meetings": [{"title": "Comp", "tier": "blocked"}]}
+    )
+    _write_whitelist(tmp_path, [])
+    gate = ExclusionGate.load(tmp_path)
+    assert (
+        gate.check("any-cal", MeetingRef(title="annual comp review"))
+        == Decision.BLOCKED
+    )
+
+
 def test_malformed_exclusions_yaml_raises(tmp_path: Path) -> None:
     """A YAML parse error surfaces as ExclusionConfigError (never swallowed)."""
     (tmp_path / "exclusions.yaml").write_text(
