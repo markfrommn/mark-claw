@@ -698,6 +698,52 @@ def test_on_trip_quarantine_write_anchored_to_validated_dir_fd(tmp_path: Path) -
     assert q_path.name == moved_files[0].name
 
 
+def test_on_trip_fsyncs_quarantine_dir_after_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """POSIX durability: fsyncing the file body alone does not persist the
+    rename — the new directory entry can be lost on crash/power-loss after
+    the method returns, while the caller has already suppressed the original
+    write. The quarantine copy is the preserved-for-review artifact (§5.4),
+    so the quarantine *directory* fd must be fsynced after the rename, not
+    only the temp-file fd.
+
+    A crash cannot be simulated portably, so this test pins the contract by
+    spying on ``os.fsync``: it counts fsync calls whose live fd refers to a
+    directory. After a trip, at least one directory fd must have been
+    fsynced. The directory check runs at fsync time (while the fd is live),
+    so the assertion is immune to later fd-integer reuse by the changelog
+    and review-queue file writes.
+    """
+    _write_exclusions(tmp_path, _two_tier_chat_exclusions())
+    st = tmp_path / "state"
+    st.mkdir(parents=True, exist_ok=True)
+
+    fsynced_dir_count = 0
+    real_fsync = os.fsync
+
+    def _spy_fsync(fd: int) -> None:
+        nonlocal fsynced_dir_count
+        try:
+            if stat.S_ISDIR(os.fstat(fd).st_mode):
+                fsynced_dir_count += 1
+        except OSError:
+            pass
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", _spy_fsync)
+
+    guard = OutputGuard(config_root=tmp_path, state_root=st)
+    trip = Trip(pattern_id="chat:slack-work[id=C0HRCHAN]", artifact_name="d.md")
+    guard.on_trip(trip, content="blocked body")
+
+    assert fsynced_dir_count >= 1, (
+        "os.fsync was never called on the quarantine directory fd; the "
+        "rename is not made durable (file fsync alone does not persist the "
+        "directory entry holding the quarantined artifact)"
+    )
+
+
 # --- Fail-closed on the guard's own error paths ---------------------------
 
 

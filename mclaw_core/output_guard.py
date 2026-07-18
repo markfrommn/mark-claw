@@ -798,6 +798,17 @@ class OutputGuard:
                     os.unlink(tmp_name, dir_fd=q_fd)
                 except FileNotFoundError:
                     pass
+            # POSIX durability: fsyncing the file body alone does not make the
+            # new directory entry durable — a crash after the rename can lose
+            # the quarantine entry while the caller has already suppressed the
+            # original write. Fsync the held dir fd so the rename persists.
+            # Best-effort: some filesystems and CI tmp dirs reject fsync on a
+            # directory; the artifact is already safely renamed, so swallow the
+            # error rather than turn a successful trip into a raised exception.
+            try:
+                os.fsync(q_fd)
+            except OSError:
+                pass
             # 0600 on the destination, anchored to the held dir fd. The temp
             # create already requests 0600 (modulo umask); the explicit chmod
             # makes the guarantee hard rather than relying on the create-mode
