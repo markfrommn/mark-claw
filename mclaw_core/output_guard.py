@@ -39,7 +39,6 @@ import enum
 import json
 import os
 import re
-import tempfile
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -657,8 +656,8 @@ class OutputGuard:
 
     # --- internals ------------------------------------------------------
 
-    def _quarantine_dir(self) -> Path:
-        """Return the quarantine dir, creating it lazily at 0700 if missing.
+    def _quarantine_dir(self) -> tuple[Path, int]:
+        """Open and validate the quarantine dir; return ``(Path, open_dir_fd)``.
 
         ``init_state_tree`` creates this dir at profile init, but a guard may
         run before init (e.g. on a fresh profile during bootstrap, or when a
@@ -668,6 +667,19 @@ class OutputGuard:
         dir discipline). Fail-closed: if the dir cannot be created or is a
         symlink, raise :class:`OutputGuardError` — the writer aborts rather
         than emit an ungated artifact.
+
+        The returned ``fd`` is **held open** and the caller closes it in a
+        ``finally``. Every file operation in :meth:`_quarantine_artifact`
+        (temp create, write, ``fsync``, ``replace``, ``chmod``, defensive
+        unlink) is anchored to this fd via ``dir_fd``-qualified
+        (``openat``-style) syscalls. This closes the TOCTOU window between
+        the symlink/dir validation here and the file writes there: the path
+        is re-resolved by name on every operation, so an attacker who can
+        mutate the state tree and swap ``quarantine`` for a symlink after
+        validation would redirect the write. Anchoring to the held fd makes
+        every operation resolve through the validated inode, so a path-swap
+        after validation cannot redirect the artifact body. The 0700 mode
+        enforcement (``fstat`` / ``fchmod``) runs against the held fd too.
         """
         q = self._state_root / "quarantine"
         try:
@@ -688,9 +700,42 @@ class OutputGuard:
             current = os.fstat(fd).st_mode & 0o777
             if current != 0o700:
                 os.fchmod(fd, 0o700)
-        finally:
+        except OSError:
             os.close(fd)
-        return q
+            raise
+        return q, fd
+
+    @staticmethod
+    def _open_temp_in_quarantine(
+        q_fd: int, *, max_retries: int = 32
+    ) -> tuple[int, str]:
+        """Create a unique temp file anchored to ``q_fd``; return ``(fd, rel_name)``.
+
+        :func:`tempfile.mkstemp` does NOT accept ``dir_fd``, so re-resolves
+        the directory by path — re-opening the TOCTOU window that
+        :meth:`_quarantine_dir` just closed. This helper mimics mkstemp's
+        collision handling (random name + ``O_CREAT | O_EXCL``, bounded
+        retries) but qualifies the create with ``dir_fd=q_fd`` so it resolves
+        through the validated directory inode, not the (possibly swapped)
+        path. ``O_NOFOLLOW`` refuses a symlink temp name an attacker might
+        plant between retries — cheap and consistent with the dir-open
+        discipline. Raises :class:`OutputGuardError` if no unique name can be
+        reserved (collision chance is astronomically small; the bound is a
+        defense-in-depth fail-closed, not an expected path).
+        """
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        name = ""
+        for _ in range(max_retries):
+            name = f"tmp-{uuid.uuid4().hex}"
+            try:
+                fd = os.open(name, flags, 0o600, dir_fd=q_fd)
+                return fd, name
+            except FileExistsError:
+                continue
+        raise OutputGuardError(
+            f"could not reserve a unique temp file in quarantine after "
+            f"{max_retries} attempts (last tried {name!r})"
+        )
 
     def _quarantine_artifact(self, trip: Trip, content: str) -> Path:
         """Write ``content`` into quarantine; return the file path.
@@ -707,42 +752,62 @@ class OutputGuard:
         explicitly ``chmod 0600`` — the artifact content is by definition
         sensitive (it tripped the guard), so the file must not be world- or
         group-readable even though the dir itself is locked down.
+
+        TOCTOU hardening: the temp create, write, ``fsync``, ``replace``,
+        ``chmod``, and defensive unlink are all anchored to the validated
+        quarantine dir fd returned by :meth:`_quarantine_dir` (via
+        ``dir_fd``-qualified syscalls). A path-swap (symlink replacement)
+        between validation and publication cannot redirect the artifact body
+        to a symlink target, because no operation re-resolves the directory
+        by name. The returned :class:`Path` is informational (used by the
+        changelog and review-queue records); only relative file *names* are
+        used on the held fd.
         """
-        q = self._quarantine_dir()
-        ts = _utc_now().strftime("%Y-%m-%dT%H%M%SZ")
-        art_path = Path(trip.artifact_name)
-        slug = _slugify(art_path.stem or trip.artifact_name)
-        ext = art_path.suffix or ".md"
-        u = uuid.uuid4().hex[:8]
-        dest = q / f"{ts}--{slug}--{u}{ext}"
-        fd, tmp_name = tempfile.mkstemp(dir=str(q))
-        tmp_path = Path(tmp_name)
+        q, q_fd = self._quarantine_dir()
         try:
+            ts = _utc_now().strftime("%Y-%m-%dT%H%M%SZ")
+            art_path = Path(trip.artifact_name)
+            slug = _slugify(art_path.stem or trip.artifact_name)
+            ext = art_path.suffix or ".md"
+            u = uuid.uuid4().hex[:8]
+            final_name = f"{ts}--{slug}--{u}{ext}"
+            dest = q / final_name
+            fd, tmp_name = self._open_temp_in_quarantine(q_fd)
             try:
-                buf = content.encode("utf-8")
-                off = 0
-                while off < len(buf):
-                    off += os.write(fd, buf[off:])
-                os.fsync(fd)
+                try:
+                    buf = content.encode("utf-8")
+                    off = 0
+                    while off < len(buf):
+                        off += os.write(fd, buf[off:])
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+                # ``os.replace`` is atomic on POSIX; ``src_dir_fd`` and
+                # ``dst_dir_fd`` both anchor to the validated quarantine fd, so
+                # a path-swap after validation cannot redirect the rename.
+                # ``final_name`` does not yet exist (the uuid makes same-second
+                # collisions essentially impossible), so this never overwrites
+                # a prior trip.
+                os.replace(
+                    tmp_name, final_name, src_dir_fd=q_fd, dst_dir_fd=q_fd
+                )
             finally:
-                os.close(fd)
-            # ``os.replace`` is atomic on POSIX. ``dest`` does not yet exist
-            # (the uuid makes same-second collisions essentially impossible),
-            # so this never overwrites a prior trip.
-            os.replace(str(tmp_path), str(dest))
+                # Defensive unlink of the temp (no-op once rename succeeded),
+                # anchored to the held dir fd.
+                try:
+                    os.unlink(tmp_name, dir_fd=q_fd)
+                except FileNotFoundError:
+                    pass
+            # 0600 on the destination, anchored to the held dir fd. The temp
+            # create already requests 0600 (modulo umask); the explicit chmod
+            # makes the guarantee hard rather than relying on the create-mode
+            # default, so the artifact body is never world/group-readable even
+            # on shared systems where a umask or future stdlib change could
+            # shift it.
+            os.chmod(final_name, 0o600, dir_fd=q_fd)
+            return dest
         finally:
-            # Defensive unlink of the temp (no-op once rename succeeded).
-            try:
-                tmp_path.unlink()
-            except FileNotFoundError:
-                pass
-        # 0600 on the destination. ``tempfile.mkstemp`` already creates files
-        # at 0600 by default (independent of the dir's mode); the explicit
-        # ``chmod`` makes that guarantee hard rather than relying on the
-        # default, so the artifact body is never world/group-readable even on
-        # shared systems where a umask or future stdlib change could shift it.
-        os.chmod(dest, 0o600)
-        return dest
+            os.close(q_fd)
 
     def _append_changelog_trip(
         self, trip: Trip, quarantine_path: Path, *, actor: str

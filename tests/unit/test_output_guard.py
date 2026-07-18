@@ -623,6 +623,81 @@ def test_on_trip_refuses_symlink_quarantine_dir(tmp_path: Path) -> None:
     )
 
 
+def test_on_trip_quarantine_write_anchored_to_validated_dir_fd(tmp_path: Path) -> None:
+    """TOCTOU regression: a path-swap after dir validation cannot redirect the write.
+
+    The pre-fix code validated the ``quarantine`` dir with ``O_NOFOLLOW |
+    O_DIRECTORY`` but then closed the fd and wrote via path-qualified
+    ``tempfile.mkstemp`` + ``os.replace`` — re-resolving the directory after
+    validation. Between validation and the write, an attacker who can mutate
+    the state tree could swap the ``quarantine`` path for a symlink and
+    redirect the (sensitive, guard-tripped) artifact body to an
+    attacker-controlled dir.
+
+    The fix holds the validated dir fd open through publication and uses
+    ``dir_fd``-qualified (``openat``-style) operations for the temp create,
+    write, ``fsync``, ``replace``, ``chmod``, and unlink. To prove the write
+    is anchored to the fd (not the path), this test subclasses
+    :class:`OutputGuard` and overrides :meth:`_quarantine_dir` to perform the
+    swap *between validation and write*: it calls ``super()`` to obtain the
+    validated fd, then moves the real dir aside and plants a symlink at the
+    original path → attacker-controlled dir. The fd still references the real
+    (moved) dir's inode; the path now resolves through the symlink.
+
+    A correct (fd-anchored) implementation writes the body into the moved real
+    dir; the symlink target stays empty. A path-qualified regression would
+    write through the symlink into the attacker dir.
+    """
+    _write_exclusions(tmp_path, _two_tier_chat_exclusions())
+    st = tmp_path / "state"
+    st.mkdir(parents=True, exist_ok=True)
+
+    attacker = tmp_path / "attacker-controlled"
+    attacker.mkdir()
+    # Where the real quarantine dir gets moved aside to during the swap. Must
+    # be on the same filesystem as ``st/quarantine`` for ``os.rename`` to be
+    # atomic — keeping it under ``st`` guarantees that.
+    moved_to = st / "quarantine-real-moved-aside"
+
+    class _SwapGuard(OutputGuard):
+        """Swaps the quarantine PATH for a symlink after the fd is validated."""
+
+        def _quarantine_dir(self) -> tuple[Path, int]:
+            q, fd = super()._quarantine_dir()
+            # TOCTOU interpose: the fd references the real dir's inode; the
+            # path no longer does.
+            os.rename(q, moved_to)
+            q.symlink_to(attacker, target_is_directory=True)
+            return q, fd
+
+    guard = _SwapGuard(config_root=tmp_path, state_root=st)
+    trip = Trip(pattern_id="x", artifact_name="y.md")
+
+    q_path = guard.on_trip(trip, content="blocked body content")
+
+    # The body MUST have landed in the real (fd-anchored, moved) dir.
+    moved_files = [p for p in moved_to.iterdir() if p.is_file()]
+    assert len(moved_files) == 1, (
+        f"artifact body did not land in the real (fd-anchored) quarantine "
+        f"dir; the write was not anchored to the validated fd; got {moved_files}"
+    )
+    assert moved_files[0].read_text(encoding="utf-8") == "blocked body content"
+
+    # The symlink target MUST be empty — the path-swap did not redirect the
+    # write through the symlink.
+    attacker_files = [p for p in attacker.iterdir() if p.is_file()]
+    assert not attacker_files, (
+        f"artifact body was redirected through the swapped symlink into the "
+        f"attacker-controlled dir; got {attacker_files}"
+    )
+    # q_path is the symlinked path (post-swap); the real file is in moved_to,
+    # so q_path does not resolve to the body. That is the expected fail-safe
+    # behavior under attack: the body is safe, the path recorded for review is
+    # the configured (pre-swap) path. This test pins the body-safety
+    # property, not q_path's post-attack resolvability.
+    assert q_path.name == moved_files[0].name
+
+
 # --- Fail-closed on the guard's own error paths ---------------------------
 
 
