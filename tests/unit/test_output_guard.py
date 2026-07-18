@@ -27,6 +27,7 @@ import json
 import os
 import stat
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -742,6 +743,121 @@ def test_on_trip_fsyncs_quarantine_dir_after_rename(
         "rename is not made durable (file fsync alone does not persist the "
         "directory entry holding the quarantined artifact)"
     )
+
+
+# --- Quarantine filename NAME_MAX truncation ------------------------------
+
+
+def _quarantine_records(tmp_path: Path) -> tuple[list[Any], list[Any]]:
+    """Collect (changelog records, review-queue items) written for trips."""
+    log_path = next((tmp_path / "state" / "changelog").glob("*.jsonl").__iter__())
+    changelog: list[Any] = [
+        json.loads(line) for line in log_path.read_text().splitlines() if line
+    ]
+    queue_path = tmp_path / "state" / "review-queue" / "pending.jsonl"
+    queue: list[Any] = []
+    if queue_path.is_file():
+        queue = [
+            json.loads(line)
+            for line in queue_path.read_text().splitlines()
+            if line
+        ]
+    return changelog, queue
+
+
+def test_on_trip_long_ascii_stem_truncates_to_name_max(tmp_path: Path) -> None:
+    """A source stem that is > 255 ASCII bytes must still quarantine cleanly.
+
+    Regression: ``_quarantine_artifact`` composed the final filename from the
+    full (untruncated) slug, so a long source stem produced a
+    ``final_name`` longer than the filesystem's 255-byte ``NAME_MAX``.
+    ``os.replace`` then raised ``ENAMETOOLONG`` *before* the rename landed,
+    which propagated out of ``on_trip`` before the changelog and review-queue
+    appends — the tripped artifact was neither written to its destination nor
+    preserved in quarantine for review. That is strictly worse than §5.4's
+    accepted "lost until reviewed" state, which assumes a quarantine copy
+    exists.
+
+    With the fix the slug is truncated to fit ``NAME_MAX`` by UTF-8 encoded
+    byte length, ``on_trip`` returns a real path, the quarantined file exists
+    at mode 0600 under ``quarantine/``, and the changelog ``guard.trip`` and
+    review-queue items are still appended.
+    """
+    guard = _guard_with(tmp_path, exclusions=_two_tier_chat_exclusions())
+    text = f"briefing mentioning {_BLOCKED_ID}"
+    # 300-char ASCII stem — encodes to 300 bytes, well over the 255-byte cap
+    # after the timestamp/uuid/extension parts are added.
+    long_stem = "a" * 300
+    artifact_name = f"{long_stem}.md"
+    trip = guard.scan(text, surface=Surface.PERSISTENCE, artifact_name=artifact_name)
+    assert isinstance(trip, Trip)
+
+    q_path = guard.on_trip(trip, content=text, actor="briefing-assembler")
+
+    # The trip succeeded: a quarantine file exists at the returned path...
+    assert q_path.is_file()
+    assert q_path.read_text(encoding="utf-8") == text
+    assert q_path.is_relative_to(tmp_path / "state" / "quarantine")
+    # ...with 0600 permissions like every other quarantined artifact.
+    mode = q_path.stat().st_mode & 0o777
+    assert mode == 0o600, f"quarantined file expected 0600, got {oct(mode)}"
+
+    # The composed filename fits NAME_MAX (a byte limit) and is valid UTF-8.
+    name_bytes = q_path.name.encode("utf-8")
+    assert len(name_bytes) <= 255, (
+        f"quarantine filename exceeds 255-byte NAME_MAX: {len(name_bytes)} bytes"
+    )
+    # ``encode`` round-trips only if there are no dangling partial chars.
+    assert name_bytes.decode("utf-8") == q_path.name
+
+    # The changelog and review-queue are still appended — the trip is auditable.
+    changelog, queue = _quarantine_records(tmp_path)
+    assert len(changelog) == 1
+    assert changelog[0]["action"] == "guard.trip"
+    assert changelog[0]["target"] == artifact_name
+    assert changelog[0]["detail"]["quarantine_path"] == str(q_path)
+    assert len(queue) == 1
+    assert queue[0]["bucket"] == "sign-off"
+
+
+def test_on_trip_multibyte_stem_truncates_on_char_boundary(tmp_path: Path) -> None:
+    """A multibyte stem whose truncation point falls mid-character must still
+    quarantine cleanly, with no dangling partial UTF-8 byte tail in the name.
+
+    Same failure mode as the ASCII case: an over-long filename would lose the
+    trip. The byte-level truncation additionally has to land on a UTF-8
+    character boundary, otherwise ``final_name`` would be invalid UTF-8 and
+    (worse) any downstream consumer that re-encodes the path would see a
+    surrogate/error. The fix decodes the truncated byte prefix with
+    ``errors="ignore"`` so any partial trailing multibyte character is
+    dropped whole.
+    """
+    guard = _guard_with(tmp_path, exclusions=_two_tier_chat_exclusions())
+    text = f"briefing mentioning {_BLOCKED_ID}"
+    # ``ä`` is 2 UTF-8 bytes; 130 of them = 260 bytes. The slug truncation
+    # budget is well under 260, so the cut lands in the middle of a multibyte
+    # character — exactly the case ``errors="ignore"`` must defend.
+    long_stem = "ä" * 130
+    artifact_name = f"{long_stem}.md"
+    trip = guard.scan(text, surface=Surface.PERSISTENCE, artifact_name=artifact_name)
+    assert isinstance(trip, Trip)
+
+    q_path = guard.on_trip(trip, content=text, actor="briefing-assembler")
+
+    assert q_path.is_file()
+    assert q_path.read_text(encoding="utf-8") == text
+
+    name_bytes = q_path.name.encode("utf-8")
+    assert len(name_bytes) <= 255, (
+        f"quarantine filename exceeds 255-byte NAME_MAX: {len(name_bytes)} bytes"
+    )
+    # Round-trips cleanly — no partial multibyte tail survived truncation.
+    assert name_bytes.decode("utf-8") == q_path.name
+
+    changelog, queue = _quarantine_records(tmp_path)
+    assert len(changelog) == 1
+    assert changelog[0]["action"] == "guard.trip"
+    assert len(queue) == 1
 
 
 # --- Fail-closed on the guard's own error paths ---------------------------
