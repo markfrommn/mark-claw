@@ -161,14 +161,15 @@ def test_chat_default_allow_for_unlisted_source(tmp_path: Path) -> None:
     assert gate.check("other-source", ChatRef(id="C0X")) == Decision.ALLOW
 
 
-def test_chat_first_matching_entry_wins_block_over_ephemeral(tmp_path: Path) -> None:
-    """If two entries match the same ref, the first one's tier is returned.
+def test_chat_blocked_dominates_ephemeral_regardless_of_order(tmp_path: Path) -> None:
+    """If two entries (one BLOCKED, one EPHEMERAL) match the same ref, BLOCKED
+    wins regardless of declaration order — the gate is order-independent, so
+    an explicit block can never be weakened by an overlapping ephemeral rule.
 
-    A blocked entry listed before an ephemeral entry for the same id wins as
-    blocked — fail-closed ordering is the operator's responsibility, but the
-    gate must be deterministic (first-match), not silently pick the weaker.
+    Pins the strongest-match (BLOCKED-dominates) semantics: evaluate every
+    matching entry, return the strongest tier.
     """
-    gate = _gate_with(
+    gate_blocked_first = _gate_with(
         tmp_path,
         exclusions={
             "chat": {
@@ -179,7 +180,20 @@ def test_chat_first_matching_entry_wins_block_over_ephemeral(tmp_path: Path) -> 
             }
         },
     )
-    assert gate.check("slack-work", ChatRef(id="C0X")) == Decision.BLOCKED
+    gate_ephemeral_first = _gate_with(
+        tmp_path,
+        exclusions={
+            "chat": {
+                "slack-work": [
+                    {"id": "C0X", "tier": "ephemeral"},
+                    {"id": "C0X", "tier": "blocked"},
+                ]
+            }
+        },
+    )
+    ref = ChatRef(id="C0X")
+    assert gate_blocked_first.check("slack-work", ref) == Decision.BLOCKED
+    assert gate_ephemeral_first.check("slack-work", ref) == Decision.BLOCKED
 
 
 # --- drive --------------------------------------------------------------
@@ -784,3 +798,171 @@ def test_skeleton_entry_shapes_parse_cleanly(tmp_path: Path) -> None:
     roots = gate.local_scan_roots()
     assert len(roots) == 1
     assert roots[0].name == "your-repo"
+
+
+# --- CodeRabbit review fixes (fail-closed hardening, DEV-14) --------------
+
+
+# Fix 1: identifier-less runtime refs are rejected at construction.
+
+
+def test_chat_ref_requires_identifier() -> None:
+    """A ChatRef with neither id nor name is a wrapper bug — reject at
+    construction rather than compile an allow-everything match surface."""
+    with pytest.raises(ValueError, match="non-empty id or name"):
+        ChatRef()
+    with pytest.raises(ValueError):
+        ChatRef(id="", name="")  # empty strings count as absent
+    with pytest.raises(ValueError):
+        ChatRef(id=None, name=None)
+
+
+def test_chat_ref_name_only_is_valid() -> None:
+    """A single non-empty field is accepted — proves the guard is 'at least
+    one' not 'all present'."""
+    ChatRef(id="C0X")
+    ChatRef(name="#general")
+    ChatRef(id="C0X", name="#general")
+
+
+def test_meeting_ref_requires_identifier() -> None:
+    """A MeetingRef with no series_id/event_id/title is rejected at
+    construction (fail closed)."""
+    with pytest.raises(ValueError, match="non-empty series_id, event_id, or title"):
+        MeetingRef()
+    with pytest.raises(ValueError):
+        MeetingRef(series_id="", event_id="", title="")
+    # Any one non-empty field is valid.
+    MeetingRef(series_id="abc")
+    MeetingRef(event_id="evt1")
+    MeetingRef(title="Standup")
+
+
+def test_drive_ref_requires_nonempty_path() -> None:
+    """A DriveRef with an empty path is rejected at construction."""
+    with pytest.raises(ValueError, match="non-empty path"):
+        DriveRef(path="")
+    DriveRef(path="/HR")  # valid
+
+
+def test_local_ref_requires_nonempty_path() -> None:
+    """A LocalRef with an empty path is rejected at construction (an empty
+    ref would bypass whitelist inversion)."""
+    with pytest.raises(ValueError, match="non-empty path"):
+        LocalRef(path="")
+    LocalRef(path="/tmp/x")  # valid
+
+
+# Fix 2: invalid config paths are not "missing files".
+
+
+def test_exclusions_yaml_as_directory_raises(tmp_path: Path) -> None:
+    """A directory at ``exclusions.yaml`` is NOT a missing file — for a
+    guarantee module, silently treating it as allow-all would be the worst
+    failure mode. Surface as ExclusionConfigError instead."""
+    (tmp_path / "exclusions.yaml").mkdir()
+    _write_whitelist(tmp_path, [])
+    with pytest.raises(ExclusionConfigError):
+        ExclusionGate.load(tmp_path)
+
+
+def test_broken_symlink_exclusions_raises(tmp_path: Path) -> None:
+    """A symlink pointing at a non-existent target is detected via lstat (not
+    treated as absent) — opening it raises FileNotFoundError, wrapped as
+    ExclusionConfigError by the open() handler."""
+    link = tmp_path / "exclusions.yaml"
+    link.symlink_to(tmp_path / "does-not-exist.yaml")
+    _write_whitelist(tmp_path, [])
+    with pytest.raises(ExclusionConfigError):
+        ExclusionGate.load(tmp_path)
+
+
+# Fix 3: reject null per-source entry lists.
+
+
+def test_null_chat_source_entries_raises(tmp_path: Path) -> None:
+    """A present-but-null per-source entry list (``{chat: {slack: null}}``) is
+    malformed — it silently means "no entries for this source". Fail loud."""
+    _write_exclusions(tmp_path, {"chat": {"slack": None}})
+    _write_whitelist(tmp_path, [])
+    with pytest.raises(ExclusionConfigError, match="got null"):
+        ExclusionGate.load(tmp_path)
+
+
+def test_null_drive_source_entries_raises(tmp_path: Path) -> None:
+    """A present-but-null per-source entry list under drive is malformed."""
+    _write_exclusions(tmp_path, {"drive": {"acct": None}})
+    _write_whitelist(tmp_path, [])
+    with pytest.raises(ExclusionConfigError, match="got null"):
+        ExclusionGate.load(tmp_path)
+
+
+# Fix 7: BLOCKED dominates EPHEMERAL across overlapping rules (drive + meetings).
+
+
+def test_drive_blocked_dominates_ephemeral(tmp_path: Path) -> None:
+    """Two drive entries matching the same path, both tiers, both orders →
+    BLOCKED. Order-independent strongest-match."""
+    gate_blocked_first = _gate_with(
+        tmp_path,
+        exclusions={
+            "drive": {
+                "gdrive-work": [
+                    {"path": "/HR", "tier": "blocked"},
+                    {"path": "/HR", "tier": "ephemeral"},
+                ]
+            }
+        },
+    )
+    gate_ephemeral_first = _gate_with(
+        tmp_path,
+        exclusions={
+            "drive": {
+                "gdrive-work": [
+                    {"path": "/HR", "tier": "ephemeral"},
+                    {"path": "/HR", "tier": "blocked"},
+                ]
+            }
+        },
+    )
+    for path in ("/HR", "/HR/payroll"):
+        ref = DriveRef(path=path)
+        assert gate_blocked_first.check("gdrive-work", ref) == Decision.BLOCKED
+        assert gate_ephemeral_first.check("gdrive-work", ref) == Decision.BLOCKED
+
+
+def test_meeting_blocked_dominates_ephemeral(tmp_path: Path) -> None:
+    """Two meeting entries with the same series_id, both tiers, both orders →
+    BLOCKED."""
+    gate_blocked_first = _gate_with(
+        tmp_path,
+        exclusions={
+            "meetings": [
+                {"series_id": "abc", "tier": "blocked"},
+                {"series_id": "abc", "tier": "ephemeral"},
+            ]
+        },
+    )
+    gate_ephemeral_first = _gate_with(
+        tmp_path,
+        exclusions={
+            "meetings": [
+                {"series_id": "abc", "tier": "ephemeral"},
+                {"series_id": "abc", "tier": "blocked"},
+            ]
+        },
+    )
+    ref = MeetingRef(series_id="abc")
+    assert gate_blocked_first.check("cal", ref) == Decision.BLOCKED
+    assert gate_ephemeral_first.check("cal", ref) == Decision.BLOCKED
+
+
+def test_lone_ephemeral_entry_still_returns_ephemeral(tmp_path: Path) -> None:
+    """Regression pin: a lone EPHEMERAL entry (no overlapping BLOCKED) still
+    returns EPHEMERAL — the strongest-match change must not collapse lone
+    ephemerals to ALLOW."""
+    gate = _gate_with(
+        tmp_path,
+        exclusions={"chat": {"s": [{"id": "C0X", "tier": "ephemeral"}]}},
+    )
+    assert gate.check("s", ChatRef(id="C0X")) == Decision.EPHEMERAL

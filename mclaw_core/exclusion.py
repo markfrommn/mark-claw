@@ -86,10 +86,20 @@ class ChatRef:
     exact), or ``name`` equals one of the entry's ``also_match`` aliases
     (case-insensitive exact — §5.2 "chat matches by conversation/contact ID").
     Setting both fields widens the match surface when the caller has them.
+
+    Construction-time validation: at least one of ``id`` / ``name`` must be a
+    non-empty string. An identifier-less ref (a wrapper bug) is rejected with
+    :class:`ValueError` rather than silently compiling to an allow-everything
+    match surface — fail closed on a hard-guarantee module.
     """
 
     id: str | None = None
     name: str | None = None
+
+    def __post_init__(self) -> None:
+        # ``None`` and ``""`` are both falsy and both "absent identifier".
+        if not self.id and not self.name:
+            raise ValueError("ChatRef requires a non-empty id or name")
 
 
 @dataclass(frozen=True)
@@ -103,9 +113,17 @@ class DriveRef:
     (``==`` or ``in .parents``), never string ``startswith`` — a string prefix
     would let ``/HR`` match ``/HR-secret`` and silently widen the exclusion.
     Drive paths are case-sensitive (spec examples are exact).
+
+    Construction-time validation: ``path`` must be a non-empty string (a
+    wrapper bug building an empty ref is rejected with :class:`ValueError`
+    rather than silently bypassing exclusions).
     """
 
     path: str
+
+    def __post_init__(self) -> None:
+        if not self.path:
+            raise ValueError("DriveRef requires a non-empty path")
 
 
 @dataclass(frozen=True)
@@ -118,11 +136,21 @@ class MeetingRef:
     ``series_id`` (an event belonging to a blocked series), OR the entry's
     ``title`` is a case-insensitive substring of ``ref.title`` (the
     title-pattern fallback for meetings whose series id the caller lacks).
+
+    Construction-time validation: at least one of ``series_id`` /
+    ``event_id`` / ``title`` must be a non-empty string — an identifier-less
+    ref is rejected with :class:`ValueError` (fail closed).
     """
 
     series_id: str | None = None
     event_id: str | None = None
     title: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.series_id and not self.event_id and not self.title:
+            raise ValueError(
+                "MeetingRef requires a non-empty series_id, event_id, or title"
+            )
 
 
 @dataclass(frozen=True)
@@ -134,9 +162,17 @@ class LocalRef:
     ``local-whitelist.yaml``; BLOCKED otherwise. There are no per-entry local
     exclusions — the whitelist IS the policy. Comparison is segment-boundary
     aware via :class:`pathlib.Path` ancestry.
+
+    Construction-time validation: ``path`` must be a non-empty string (a
+    wrapper bug building an empty ref is rejected with :class:`ValueError`
+    rather than silently bypassing whitelist inversion).
     """
 
     path: str
+
+    def __post_init__(self) -> None:
+        if not self.path:
+            raise ValueError("LocalRef requires a non-empty path")
 
 
 # --- compiled entries (internal) -----------------------------------------
@@ -291,16 +327,28 @@ def _entry_tier(entry: dict[str, object], *, context: str) -> Decision:
 
 
 def _load_yaml_or_none(path: Path) -> object | None:
-    """Load YAML from ``path``; return ``None`` if the file is absent.
+    """Load YAML from ``path``; return ``None`` ONLY for a genuinely-absent path.
+
+    A directory, a broken symlink, or a permission error are NOT "absent" —
+    for ``exclusions.yaml`` each would silently load an allow-all policy, so
+    they surface as :class:`ExclusionConfigError`. Absence is detected with
+    :meth:`path.lstat` (which does not follow symlinks), so a broken symlink
+    is caught here rather than treated as missing. A subsequent open failure
+    (e.g. opening a directory, a non-UTF-8 file) is likewise wrapped.
 
     A :class:`yaml.YAMLError` is wrapped in :class:`ExclusionConfigError` so a
     malformed config surfaces as a clear, single exception type from ``load``
-    rather than leaking the parser's exception out of the gate. An unreadable
-    file (``PermissionError``, non-UTF-8) is treated the same way — the gate
+    rather than leaking the parser's exception out of the gate. The gate
     never silently degrades.
     """
-    if not path.is_file():
+    try:
+        path.lstat()
+    except FileNotFoundError:
         return None
+    except OSError as exc:
+        raise ExclusionConfigError(
+            f"cannot inspect {path.name}: {type(exc).__name__}"
+        ) from exc
     try:
         with path.open(encoding="utf-8") as f:
             # ``yaml.safe_load`` is typed ``Any``; assign through ``object`` so
@@ -351,13 +399,23 @@ def _compile_chat(top: dict[str, object]) -> dict[str, tuple[_ChatEntry, ...]]:
     result: dict[str, tuple[_ChatEntry, ...]] = {}
     for source_id, entries_raw in chat_map.items():
         ctx = f"exclusions.yaml: chat[{source_id!r}]"
+        # A present-but-null per-source entry list (a YAML dangling key under
+        # the source id) is malformed — same class as the top-level section
+        # guard, one level deeper. It would otherwise compile to "no entries
+        # for this source" and silently disable protection the operator wrote
+        # an (indented) list for. Fail loud. (Do NOT change ``_as_list``: its
+        # None→[] tolerance is still wanted for ``scan_roots``/``also_match``.)
+        if entries_raw is None:
+            raise ExclusionConfigError(
+                f"{ctx}: expected a list of entries, got null"
+            )
         entries_list = _as_list(entries_raw, context=ctx)
         compiled: list[_ChatEntry] = []
         for i, entry_raw in enumerate(entries_list):
             entry_ctx = f"{ctx}[{i}]"
             entry = _as_mapping(entry_raw, context=entry_ctx)
             tier = _entry_tier(entry, context=entry_ctx)
-            id = _opt_str(entry.get("id"), key="id", context=entry_ctx)
+            entry_id = _opt_str(entry.get("id"), key="id", context=entry_ctx)
             name = _opt_str(entry.get("name"), key="name", context=entry_ctx)
             aliases = _str_list(
                 entry.get("also_match"), key="also_match", context=entry_ctx
@@ -365,14 +423,14 @@ def _compile_chat(top: dict[str, object]) -> dict[str, tuple[_ChatEntry, ...]]:
             # An entry with no identifier can never match any ref — it compiles
             # but is silently ALLOW-for-everything, masking an operator typo
             # like ``{tier: blocked}`` missing its identifier. Fail loud.
-            if id is None and name is None and not aliases:
+            if entry_id is None and name is None and not aliases:
                 raise ExclusionConfigError(
                     f"{entry_ctx}: an exclusion entry with no id, name, or "
                     f"also_match can never match — add an identifier"
                 )
             compiled.append(
                 _ChatEntry(
-                    id=id,
+                    id=entry_id,
                     name_lower=name.casefold() if name is not None else None,
                     aliases_lower=frozenset(a.casefold() for a in aliases),
                     tier=tier,
@@ -411,6 +469,11 @@ def _compile_drive(top: dict[str, object]) -> dict[str, tuple[_DriveEntry, ...]]
     result: dict[str, tuple[_DriveEntry, ...]] = {}
     for account_id, entries_raw in drive_map.items():
         ctx = f"exclusions.yaml: drive[{account_id!r}]"
+        # Present-but-null per-source entry list — malformed (see _compile_chat).
+        if entries_raw is None:
+            raise ExclusionConfigError(
+                f"{ctx}: expected a list of entries, got null"
+            )
         entries_list = _as_list(entries_raw, context=ctx)
         compiled: list[_DriveEntry] = []
         for i, entry_raw in enumerate(entries_list):
@@ -517,39 +580,30 @@ def _compile_scan_roots(whitelist_raw: object) -> tuple[Path, ...]:
 class ExclusionGate:
     """Compiled exclusion policy — the single fetch-gate choke point (§5.2).
 
-    Construct an instance with :meth:`load` (the only public constructor),
-    which reads ``<config_root>/exclusions.yaml`` and
-    ``<config_root>/local-whitelist.yaml`` and compiles the lookup tables a
-    single time. ``check`` and ``local_scan_roots`` are O(entries) lookups
+    Construct an instance with :meth:`load` (the documented §5.2 API) or
+    directly as ``ExclusionGate(config_root)`` — both go through the same
+    single construction path, which reads ``<config_root>/exclusions.yaml``
+    and ``<config_root>/local-whitelist.yaml`` and compiles the lookup tables
+    a single time. ``check`` and ``local_scan_roots`` are O(entries) lookups
     over the compiled structures, not disk reads.
 
     The compiled structures are private and never exposed: callers go through
     ``check`` / ``local_scan_roots``. There is no public mutator, no root-
-    argument overload, no way to inject an entry — fail-closed construction is
-    a structural part of the guarantee (§11.1).
+    argument overload, no way to inject an entry, and no API that accepts
+    compiled structures or scan roots directly — fail-closed construction is
+    a structural part of the guarantee (§11.1: "every hard constraint is a
+    structural fact, not a prompt instruction"). ``load`` and
+    ``__init__(config_root)`` are the only construction paths; both re-read
+    disk so a permissive gate or injected roots cannot exist.
     """
 
-    # Class-level type annotations (the instance is built once by ``load``).
+    # Class-level type annotations (the instance is built once per ``load``).
     _chat: dict[str, tuple[_ChatEntry, ...]]
     _drive: dict[str, tuple[_DriveEntry, ...]]
     _meetings: tuple[_MeetingEntry, ...]
     _scan_roots: tuple[Path, ...]
 
-    def __init__(
-        self,
-        *,
-        chat: dict[str, tuple[_ChatEntry, ...]],
-        drive: dict[str, tuple[_DriveEntry, ...]],
-        meetings: tuple[_MeetingEntry, ...],
-        scan_roots: tuple[Path, ...],
-    ) -> None:
-        self._chat = chat
-        self._drive = drive
-        self._meetings = meetings
-        self._scan_roots = scan_roots
-
-    @classmethod
-    def load(cls, config_root: Path) -> ExclusionGate:
+    def __init__(self, config_root: Path) -> None:
         """Compile a gate from the two config files under ``config_root``.
 
         Reads ``<config_root>/exclusions.yaml`` and
@@ -561,23 +615,33 @@ class ExclusionGate:
         * A missing ``local-whitelist.yaml`` → no scan roots; every local item
           returns :data:`Decision.BLOCKED` (fail-closed for local).
 
-        Loading always re-reads disk: calling ``load`` again after editing
-        config IS the reload path (no separate ``reload()`` is needed or
-        wanted — there is no cached state to invalidate).
+        Loading always re-reads disk: constructing again after editing config
+        IS the reload path (no separate ``reload()`` is needed or wanted —
+        there is no cached state to invalidate).
 
-        Raises :class:`ExclusionConfigError` if either file is malformed YAML
-        or contains an entry with a ``tier`` outside the allowed set.
+        Raises :class:`ExclusionConfigError` if either file is malformed YAML,
+        unreadable, or contains an entry with a ``tier`` outside the allowed
+        set — the gate never silently degrades.
         """
         exclusions_raw = _load_yaml_or_none(config_root / "exclusions.yaml")
         whitelist_raw = _load_yaml_or_none(config_root / "local-whitelist.yaml")
 
         top = _as_mapping(exclusions_raw, context="exclusions.yaml")
-        return cls(
-            chat=_compile_chat(top),
-            drive=_compile_drive(top),
-            meetings=_compile_meetings(top),
-            scan_roots=_compile_scan_roots(whitelist_raw),
-        )
+        self._chat = _compile_chat(top)
+        self._drive = _compile_drive(top)
+        self._meetings = _compile_meetings(top)
+        self._scan_roots = _compile_scan_roots(whitelist_raw)
+
+    @classmethod
+    def load(cls, config_root: Path) -> ExclusionGate:
+        """Compile a gate from the two config files under ``config_root``.
+
+        The documented §5.2 construction API (``ExclusionGate.load(config)``);
+        delegates to ``__init__``, which performs the load and compile. See
+        :meth:`__init__` for the file/exception contract. Keeping this
+        classmethod preserves the spec-normative call shape for every wrapper.
+        """
+        return cls(config_root)
 
     def check(
         self, source_id: str, item_ref: ChatRef | DriveRef | MeetingRef | LocalRef
@@ -622,70 +686,99 @@ class ExclusionGate:
     # --- per-strategy checks ---------------------------------------------
 
     def _check_chat(self, source_id: str, ref: ChatRef) -> Decision:
-        """First-match-wins id/name/alias lookup.
+        """Strongest-match id/name/alias lookup (BLOCKED dominates).
 
         ``id`` is matched exactly (case-sensitive — provider IDs are opaque
         tokens). ``name`` and ``also_match`` aliases are matched
-        case-insensitively (case-folded). The first entry that matches
-        supplies the tier — ordering is the operator's responsibility, and
-        the gate is deterministic rather than silently picking the weaker.
+        case-insensitively (case-folded). Every matching entry is considered
+        and the strongest tier wins: ``BLOCKED > EPHEMERAL > ALLOW``. This
+        makes the gate **order-independent** — an explicit ``BLOCKED`` entry
+        can never be weakened by an overlapping ``EPHEMERAL`` entry, so the
+        operator does not need to worry about rule ordering. ``BLOCKED``
+        short-circuits on the first match; an ``EPHEMERAL`` match keeps
+        scanning in case a later entry is ``BLOCKED``.
         """
+        result = Decision.ALLOW
         for entry in self._chat.get(source_id, ()):
+            matched = False
             if ref.id is not None and entry.id is not None and ref.id == entry.id:
-                return entry.tier
-            if ref.name is not None:
+                matched = True
+            elif ref.name is not None:
                 name_cf = ref.name.casefold()
                 if entry.name_lower is not None and name_cf == entry.name_lower:
-                    return entry.tier
-                if name_cf in entry.aliases_lower:
-                    return entry.tier
-        return Decision.ALLOW
+                    matched = True
+                elif name_cf in entry.aliases_lower:
+                    matched = True
+            if not matched:
+                continue
+            if entry.tier is Decision.BLOCKED:
+                return Decision.BLOCKED  # strongest; short-circuit
+            # entry.tier is EPHEMERAL (only two tiers exist in _ENTRY_TIERS).
+            result = Decision.EPHEMERAL
+        return result
 
     def _check_drive(self, source_id: str, ref: DriveRef) -> Decision:
-        """Path-prefix ancestry lookup (segment-boundary aware).
+        """Strongest-match path-prefix ancestry lookup (BLOCKED dominates).
 
         The item path and each entry path are :class:`PurePosixPath`, so the
         ancestry check (``item == entry`` or ``entry in item.parents``)
         compares whole path segments, not string prefixes — ``/HR`` matches
         ``/HR/payroll`` but NOT ``/HR-secret``. Drive paths are case-sensitive
-        (provider paths are exact in the spec examples).
+        (provider paths are exact in the spec examples). Every matching entry
+        is considered and the strongest tier wins (``BLOCKED > EPHEMERAL >
+        ALLOW``), so overlapping prefix rules are order-independent.
         """
         item_path = PurePosixPath(ref.path)
+        result = Decision.ALLOW
         for entry in self._drive.get(source_id, ()):
-            if item_path == entry.path or entry.path in item_path.parents:
-                return entry.tier
-        return Decision.ALLOW
+            if item_path != entry.path and entry.path not in item_path.parents:
+                continue
+            if entry.tier is Decision.BLOCKED:
+                return Decision.BLOCKED
+            result = Decision.EPHEMERAL
+        return result
 
     def _check_meeting(self, ref: MeetingRef) -> Decision:
-        """Flat-list lookup with title-pattern fallback (§5.2).
+        """Strongest-match flat-list lookup with title-pattern fallback (§5.2).
 
         A meeting matches an entry if ``ref.series_id == entry.series_id``
         (the canonical case), or ``ref.event_id == entry.series_id`` (an event
         belonging to a blocked series — providers surface a single series id
         on each occurrence), or the entry's ``title`` is a case-insensitive
         substring of ``ref.title`` (the fallback for cases where the caller
-        has only a human-readable title). First match wins.
+        has only a human-readable title). Every matching entry is considered
+        and the strongest tier wins (``BLOCKED > EPHEMERAL > ALLOW``), so an
+        explicit block is never weakened by an overlapping title-pattern
+        ephemeral rule.
         """
+        title_cf = ref.title.casefold() if ref.title is not None else None
+        result = Decision.ALLOW
         for entry in self._meetings:
+            matched = False
             if (
                 ref.series_id is not None
                 and entry.series_id is not None
                 and ref.series_id == entry.series_id
             ):
-                return entry.tier
-            if (
+                matched = True
+            elif (
                 ref.event_id is not None
                 and entry.series_id is not None
                 and ref.event_id == entry.series_id
             ):
-                return entry.tier
-            if (
-                ref.title is not None
+                matched = True
+            elif (
+                title_cf is not None
                 and entry.title_lower is not None
-                and entry.title_lower in ref.title.casefold()
+                and entry.title_lower in title_cf
             ):
-                return entry.tier
-        return Decision.ALLOW
+                matched = True
+            if not matched:
+                continue
+            if entry.tier is Decision.BLOCKED:
+                return Decision.BLOCKED
+            result = Decision.EPHEMERAL
+        return result
 
     def _check_local(self, ref: LocalRef) -> Decision:
         """Whitelist inversion: BLOCKED unless under a whitelisted root.
