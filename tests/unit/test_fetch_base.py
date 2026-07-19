@@ -14,6 +14,7 @@ from mclaw_core.fetch import (
     EnumeratedItem,
     FetchError,
     JsonValue,
+    ephemeral_sweep,
     fetch_items,
     get_secret,
 )
@@ -173,16 +174,38 @@ def test_ephemeral_spool_is_emptied_at_sweep_boundaries(tmp_path: Path) -> None:
     stale.write_text("stale ephemeral content", encoding="utf-8")
     provider = Provider([_item("chat:blocked", "blocked", "new")])
 
-    result = fetch_items(
-        provider,
-        gate=_gate(tmp_path, tier="ephemeral"),
-        state_root=state,
-        pipeline="sweep-15m",
-    )
+    with ephemeral_sweep(state) as boundary:
+        result = fetch_items(
+            provider,
+            gate=_gate(tmp_path, tier="ephemeral"),
+            state_root=state,
+            pipeline="sweep-15m",
+            ephemeral_boundary=boundary,
+        )
+
+        spool_files = list(boundary.spool_root.rglob("*.jsonl"))
+        assert len(spool_files) == 1
+        assert "safe content" in spool_files[0].read_text(encoding="utf-8")
 
     assert provider.content_calls == ["chat:blocked"]
     assert result.ephemeral == 1
     assert list((state / "spool" / "ephemeral").rglob("*")) == []
+
+
+def test_ephemeral_item_requires_active_boundary_even_for_sweep_name(
+    tmp_path: Path,
+) -> None:
+    provider = Provider([_item("chat:blocked", "blocked", "new")])
+
+    with pytest.raises(FetchError, match="15-minute sweep"):
+        fetch_items(
+            provider,
+            gate=_gate(tmp_path, tier="ephemeral"),
+            state_root=tmp_path / "state",
+            pipeline="sweep-15m",
+        )
+
+    assert provider.content_calls == []
 
 
 def test_secret_child_process_receives_requested_profile(
