@@ -3,19 +3,26 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
 
 from mclaw_core.exclusion import ChatRef, ExclusionGate
-from mclaw_core.fetch import EnumeratedItem, FetchError, JsonValue, fetch_items
+from mclaw_core.fetch import (
+    EnumeratedItem,
+    FetchError,
+    JsonValue,
+    fetch_items,
+    get_secret,
+)
 
 
-def _gate(tmp_path: Path, *, blocked: bool = False) -> ExclusionGate:
+def _gate(tmp_path: Path, *, tier: str | None = None) -> ExclusionGate:
     (tmp_path / "exclusions.yaml").write_text(
         "chat:\n  source:\n"
-        + ("    - {id: blocked, tier: blocked}\n" if blocked else "    []\n"),
+        + (f"    - {{id: blocked, tier: {tier}}}\n" if tier else "    []\n"),
         encoding="utf-8",
     )
     (tmp_path / "local-whitelist.yaml").write_text("scan_roots: []\n", encoding="utf-8")
@@ -71,7 +78,7 @@ def test_gate_runs_before_content_fetch_for_blocked_item(tmp_path: Path) -> None
     provider = Provider([_item("chat:blocked", "blocked", "2")])
 
     result = fetch_items(
-        provider, gate=_gate(tmp_path, blocked=True), state_root=tmp_path / "state"
+        provider, gate=_gate(tmp_path, tier="blocked"), state_root=tmp_path / "state"
     )
 
     assert provider.content_calls == []
@@ -119,7 +126,7 @@ def test_run_record_counts_blocked_items_without_identifiers(tmp_path: Path) -> 
 
     fetch_items(
         provider,
-        gate=_gate(tmp_path, blocked=True),
+        gate=_gate(tmp_path, tier="blocked"),
         state_root=state,
         pipeline="backfill",
     )
@@ -142,3 +149,61 @@ def test_retries_three_times_and_honors_retry_after(tmp_path: Path) -> None:
 
     assert provider.attempts == 3
     assert delays == [7.0, 7.0]
+
+
+def test_ephemeral_item_is_rejected_outside_the_15_minute_sweep(tmp_path: Path) -> None:
+    provider = Provider([_item("chat:blocked", "blocked", "new")])
+
+    with pytest.raises(FetchError, match="15-minute sweep"):
+        fetch_items(
+            provider,
+            gate=_gate(tmp_path, tier="ephemeral"),
+            state_root=tmp_path / "state",
+            pipeline="backfill",
+        )
+
+    assert provider.content_calls == []
+    assert not (tmp_path / "state" / "spool" / "ephemeral").exists()
+
+
+def test_ephemeral_spool_is_emptied_at_sweep_boundaries(tmp_path: Path) -> None:
+    state = tmp_path / "state"
+    stale = state / "spool" / "ephemeral" / "old.jsonl"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("stale ephemeral content", encoding="utf-8")
+    provider = Provider([_item("chat:blocked", "blocked", "new")])
+
+    result = fetch_items(
+        provider,
+        gate=_gate(tmp_path, tier="ephemeral"),
+        state_root=state,
+        pipeline="sweep-15m",
+    )
+
+    assert provider.content_calls == ["chat:blocked"]
+    assert result.ephemeral == 1
+    assert list((state / "spool" / "ephemeral").rglob("*")) == []
+
+
+def test_secret_child_process_receives_requested_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child_envs: list[dict[str, str]] = []
+
+    def fake_run(
+        command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        environment = kwargs["env"]
+        assert isinstance(environment, dict)
+        assert all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in environment.items()
+        )
+        child_envs.append(environment)
+        return subprocess.CompletedProcess(command, 0, stdout="secret\n")
+
+    monkeypatch.setattr("mclaw_core.fetch.subprocess.run", fake_run)
+
+    assert get_secret("keychain://mark-claw-alt/item-field", profile="alt") == "secret"
+    assert child_envs[0]["MCLAW_PROFILE"] == "alt"
+    assert set(child_envs[0]) == {"MCLAW_PROFILE", "PATH"}

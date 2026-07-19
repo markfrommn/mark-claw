@@ -14,6 +14,8 @@ base, spool, cursor, nor run record receives the resulting value.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import time
 from collections.abc import Callable, Iterable, Mapping
@@ -40,6 +42,7 @@ type Clock = Callable[[], str]
 
 _REQUIRED_ENVELOPE_FIELDS = frozenset({"id", "source", "kind", "ts"})
 _MAX_ATTEMPTS = 3
+_EPHEMERAL_SWEEP_PIPELINE = "sweep-15m"
 
 
 class FetchError(Exception):
@@ -107,6 +110,7 @@ def get_secret(ref: str, *, profile: str) -> str:
         check=False,
         capture_output=True,
         text=True,
+        env={"MCLAW_PROFILE": profile, "PATH": os.environ.get("PATH", os.defpath)},
     )
     if completed.returncode != 0:
         raise FetchError("provider credential resolution failed")
@@ -124,14 +128,19 @@ def fetch_items(
 ) -> FetchResult:
     """Enumerate, gate, fetch, spool, and checkpoint one source.
 
-    A blocked item never reaches ``provider.fetch_content``.  Each cursor is
-    written only after its item has been successfully skipped or spooled;
-    failures therefore leave the prior checkpoint intact for a safe retry.
+    A blocked item never reaches ``provider.fetch_content``. Ephemeral items
+    are structurally available only to the designated 15-minute sweep, whose
+    private spool is emptied at both sweep boundaries. Each cursor is written
+    only after its item has been successfully skipped or spooled; failures
+    therefore leave the prior checkpoint intact for a safe retry.
     """
     root = state_root if state_root is not None else profile_state_root()
     run_name = pipeline or f"fetch-{provider.source_id}"
     _validate_filename_component(provider.source_id, label="source id")
     _validate_filename_component(run_name, label="pipeline")
+    is_ephemeral_sweep = run_name == _EPHEMERAL_SWEEP_PIPELINE
+    if is_ephemeral_sweep:
+        _clear_ephemeral_spool(root)
     started = _timestamp(now)
     cursor = _read_cursor(root, provider.source_id)
     fetched = 0
@@ -145,6 +154,8 @@ def fetch_items(
                 blocked_skipped += 1
                 _write_cursor(root, provider.source_id, item.cursor, started)
                 continue
+            if decision is Decision.EPHEMERAL and not is_ephemeral_sweep:
+                raise FetchError("ephemeral items require the 15-minute sweep")
             content = _fetch_with_retry(provider, item, sleep=sleep)
             tier = "ephemeral" if decision is Decision.EPHEMERAL else "full"
             _append_spool(
@@ -168,16 +179,20 @@ def fetch_items(
         if isinstance(exc, FetchError):
             raise
         raise FetchError("provider fetch failed") from exc
-    _write_run_record(
-        root,
-        run_name,
-        started=started,
-        result="ok",
-        fetched=fetched,
-        blocked_skipped=blocked_skipped,
-        ephemeral=ephemeral,
-        error=None,
-    )
+    else:
+        _write_run_record(
+            root,
+            run_name,
+            started=started,
+            result="ok",
+            fetched=fetched,
+            blocked_skipped=blocked_skipped,
+            ephemeral=ephemeral,
+            error=None,
+        )
+    finally:
+        if is_ephemeral_sweep:
+            _clear_ephemeral_spool(root)
     return FetchResult(
         fetched=fetched,
         blocked_skipped=blocked_skipped,
@@ -242,6 +257,17 @@ def _append_spool(
     day = sweep[:10]
     with (destination / f"{day}.jsonl").open("a", encoding="utf-8") as spool:
         spool.write(encoded)
+
+
+def _clear_ephemeral_spool(root: Path) -> None:
+    """Remove all transient sweep content, refusing a redirected spool path."""
+    ephemeral_root = root / "spool" / "ephemeral"
+    if ephemeral_root.is_symlink():
+        raise FetchError("refusing to clear a symlinked ephemeral spool")
+    if ephemeral_root.exists():
+        shutil.rmtree(ephemeral_root)
+    ephemeral_root.mkdir(parents=True, mode=0o700)
+    ephemeral_root.chmod(0o700)
 
 
 def _validate_item(item: EnumeratedItem, source_id: str) -> None:
