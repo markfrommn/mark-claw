@@ -17,7 +17,7 @@ from pathlib import Path
 
 import yaml
 
-from . import __version__, doctor, output_guard, paths, secret
+from . import __version__, auth, doctor, output_guard, paths, secret
 
 #: Subcommands that are intentionally not implemented in this unit. Each prints a
 #: clear message and exits non-zero so callers cannot mistake a stub for a no-op.
@@ -63,8 +63,25 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def cmd_auth(args: argparse.Namespace) -> int:
-    """Stub: the real OAuth / device-code / Telethon flows land in DEV-31."""
-    return _print_stub(f"auth {args.provider}", tracked="DEV-31")
+    """Dispatch secret-safe interactive provider authentication wrappers."""
+    try:
+        if args.provider == "google":
+            if not args.account:
+                raise auth.AuthError("Google authentication requires an account id")
+            result = auth.authenticate_google(args.account, self_test=args.self_test)
+        elif args.provider == "graph":
+            if not args.account:
+                raise auth.AuthError("Graph authentication requires an account id")
+            result = auth.authenticate_graph(args.account, self_test=args.self_test)
+        else:
+            result = auth.authenticate_telegram(self_test=args.self_test)
+    except auth.AuthError as exc:
+        print(f"mclaw auth {args.provider}: {exc}", file=sys.stderr)
+        return 1
+    if result is not None:
+        for key, value in result.items():
+            print(f"{key}: {value}")
+    return 0
 
 
 def cmd_secret(args: argparse.Namespace) -> int:
@@ -74,8 +91,7 @@ def cmd_secret(args: argparse.Namespace) -> int:
         if args.secret_cmd == "set":
             secret.set_secret(args.item, args.field, profile=profile)
             print(
-                f"stored {args.item}-{args.field} on "
-                f"{secret.service_name(profile)}",
+                f"stored {args.item}-{args.field} on {secret.service_name(profile)}",
                 file=sys.stderr,
             )
             return 0
@@ -198,9 +214,7 @@ def _cmd_guard_scan_vault(profile: str) -> int:
             # would be a false clean. Accumulate the relative path and warn
             # after the scan; the exit code is nonzero so the spot-check
             # cannot masquerade as success.
-            unreadable.append(
-                f"{note_path.relative_to(vault)} ({type(exc).__name__})"
-            )
+            unreadable.append(f"{note_path.relative_to(vault)} ({type(exc).__name__})")
             continue
         rel = str(note_path.relative_to(vault))
         result = guard.scan(
@@ -307,9 +321,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     auth = sub.add_parser(
         "auth",
-        help="authenticate a provider (stub — see DEV-31)",
+        help="authenticate a provider with its constrained interactive flow",
     )
     auth.add_argument("provider", choices=_AUTH_PROVIDERS)
+    auth.add_argument("account", nargs="?", help="configured account id (Google/Graph)")
+    auth.add_argument(
+        "--self-test",
+        action="store_true",
+        help="run the provider's minimal read-only verification after authentication",
+    )
     auth.set_defaults(func=cmd_auth)
 
     _build_secret_parser(sub)
