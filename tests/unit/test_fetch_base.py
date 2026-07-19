@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -19,6 +18,7 @@ from mclaw_core.fetch import (
     fetch_items,
     get_secret,
 )
+from mclaw_core.secret import SecretError
 
 
 def _gate(tmp_path: Path, *, tier: str | None = None) -> ExclusionGate:
@@ -232,6 +232,28 @@ def test_non_transient_provider_error_is_not_retried(tmp_path: Path) -> None:
     assert provider.content_calls == ["chat:one"]
 
 
+def test_falsey_retry_predicate_is_honored(tmp_path: Path) -> None:
+    provider = FlakyProvider([_item("chat:one", "allowed", "new")])
+
+    class FalseyRetryable:
+        def __bool__(self) -> bool:
+            return False
+
+        def __call__(self, error: Exception) -> bool:
+            return False
+
+    with pytest.raises(FetchError):
+        fetch_items(
+            provider,
+            gate=_gate(tmp_path),
+            state_root=tmp_path / "state",
+            retryable=FalseyRetryable(),
+            sleep=lambda _: pytest.fail("falsey predicate rejected retry"),
+        )
+
+    assert provider.attempts == 1
+
+
 def test_ephemeral_item_is_rejected_before_content_fetch(tmp_path: Path) -> None:
     provider = Provider([_item("chat:blocked", "blocked", "new")])
 
@@ -261,39 +283,30 @@ def test_ephemeral_item_rejects_caller_selected_sweep_name(tmp_path: Path) -> No
     assert provider.content_calls == []
 
 
-def test_secret_child_process_receives_requested_profile(
+def test_secret_resolution_receives_requested_profile(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    child_envs: list[dict[str, str]] = []
+    received: list[tuple[str, str, str]] = []
 
-    def fake_run(
-        command: list[str], **kwargs: object
-    ) -> subprocess.CompletedProcess[str]:
-        environment = kwargs["env"]
-        assert isinstance(environment, dict)
-        assert all(
-            isinstance(key, str) and isinstance(value, str)
-            for key, value in environment.items()
-        )
-        child_envs.append(environment)
-        return subprocess.CompletedProcess(command, 0, stdout="secret\n")
+    def fake_keychain_get_secret(item: str, field: str, *, profile: str) -> str:
+        received.append((item, field, profile))
+        return "secret"
 
-    monkeypatch.setattr("mclaw_core.fetch.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "mclaw_core.fetch.keychain_get_secret", fake_keychain_get_secret
+    )
 
     assert get_secret("keychain://mark-claw-alt/item-field", profile="alt") == "secret"
-    assert child_envs[0]["MCLAW_PROFILE"] == "alt"
-    assert set(child_envs[0]) == {"MCLAW_PROFILE", "PATH"}
+    assert received == [("item", "field", "alt")]
 
 
-def test_secret_resolution_timeout_becomes_fetch_error(
+def test_secret_resolution_error_becomes_fetch_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_run(
-        command: list[str], *, timeout: float, **kwargs: object
-    ) -> subprocess.CompletedProcess[str]:
-        raise subprocess.TimeoutExpired(command, timeout)
+    def fail(*args: object, **kwargs: object) -> str:
+        raise SecretError("locked")
 
-    monkeypatch.setattr("mclaw_core.fetch.subprocess.run", fake_run)
+    monkeypatch.setattr("mclaw_core.fetch.keychain_get_secret", fail)
 
-    with pytest.raises(FetchError, match="resolution timed out"):
+    with pytest.raises(FetchError, match="resolution failed"):
         get_secret("keychain://mark-claw-alt/item-field", profile="alt")

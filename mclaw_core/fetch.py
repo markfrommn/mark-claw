@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import tempfile
 import time
 from collections.abc import Callable, Iterable, Mapping
@@ -33,6 +32,8 @@ from .exclusion import (
     MeetingRef,
 )
 from .paths import state_root as profile_state_root
+from .secret import SecretError
+from .secret import get_secret as keychain_get_secret
 
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
@@ -43,7 +44,6 @@ type Retryable = Callable[[Exception], bool]
 
 _REQUIRED_ENVELOPE_FIELDS = frozenset({"id", "source", "kind", "ts"})
 _MAX_ATTEMPTS = 3
-_SECRET_GET_TIMEOUT_S = 10
 
 
 class FetchError(Exception):
@@ -96,9 +96,9 @@ class FetchResult:
 def get_secret(ref: str, *, profile: str) -> str:
     """Resolve one ``keychain://`` ref for use *inside a provider wrapper*.
 
-    This helper invokes the existing ``mclaw secret get`` security wrapper.
+    This helper invokes the existing in-process Keychain security wrapper.
     It intentionally has no logging and callers must keep the return value
-    local to their provider-client construction.  It is not used by
+    local to their provider-client construction. It is not used by
     :func:`fetch_items`, keeping credentials outside the shared data flow.
     """
     prefix = f"keychain://mark-claw-{profile}/"
@@ -111,22 +111,9 @@ def get_secret(ref: str, *, profile: str) -> str:
     if not separator or not item or not field:
         raise FetchError("credential reference must contain an item and field")
     try:
-        completed = subprocess.run(
-            ["mclaw", "secret", "get", item, field],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=_SECRET_GET_TIMEOUT_S,
-            env={
-                "MCLAW_PROFILE": profile,
-                "PATH": os.environ.get("PATH", os.defpath),
-            },
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise FetchError("provider credential resolution timed out") from exc
-    if completed.returncode != 0:
-        raise FetchError("provider credential resolution failed")
-    return completed.stdout.rstrip("\n")
+        return keychain_get_secret(item, field, profile=profile)
+    except SecretError as exc:
+        raise FetchError("provider credential resolution failed") from exc
 
 
 def fetch_items(
@@ -155,7 +142,9 @@ def fetch_items(
     _validate_filename_component(provider.source_id, label="source id")
     _validate_filename_component(run_name, label="pipeline")
     started = _timestamp(now)
-    retry_predicate = retryable or _is_transient_provider_error
+    retry_predicate = (
+        retryable if retryable is not None else _is_transient_provider_error
+    )
     fetched = 0
     blocked_skipped = 0
     ephemeral = 0
