@@ -15,14 +15,12 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from types import TracebackType
 from typing import Protocol, cast
 
 from .exclusion import (
@@ -43,59 +41,10 @@ type Clock = Callable[[], str]
 
 _REQUIRED_ENVELOPE_FIELDS = frozenset({"id", "source", "kind", "ts"})
 _MAX_ATTEMPTS = 3
-_EPHEMERAL_SWEEP_PIPELINE = "sweep-15m"
 
 
 class FetchError(Exception):
     """A provider item could not be safely fetched or persisted."""
-
-
-class EphemeralSweep:
-    """The sole lifecycle boundary for transient 15-minute-sweep content.
-
-    Entering clears stale ephemeral data. While active, the sweep orchestrator
-    may fetch and consume its private spool. Exiting always removes it, even
-    when provider fetch or urgent consumption raises. The constructor is not a
-    capability by itself: :func:`fetch_items` requires both an *active*
-    instance and the fixed ``sweep-15m`` pipeline name before it fetches an
-    EPHEMERAL item.
-    """
-
-    def __init__(self, state_root: Path) -> None:
-        self._state_root = state_root
-        self._active = False
-
-    def __enter__(self) -> EphemeralSweep:
-        _clear_ephemeral_spool(self._state_root)
-        self._active = True
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None:
-        self._active = False
-        _clear_ephemeral_spool(self._state_root)
-
-    @property
-    def spool_root(self) -> Path:
-        """Return the private spool only during the active sweep boundary."""
-        if not self._active:
-            raise FetchError("ephemeral spool is available only during an active sweep")
-        return self._state_root / "spool" / "ephemeral"
-
-    def permits(self, state_root: Path) -> bool:
-        """Return whether this active boundary owns ``state_root``."""
-        return self._active and self._state_root == state_root
-
-
-def ephemeral_sweep(state_root: Path | None = None) -> EphemeralSweep:
-    """Create the explicit boundary used by the 15-minute sweep orchestrator."""
-    return EphemeralSweep(
-        state_root if state_root is not None else profile_state_root()
-    )
 
 
 @dataclass(frozen=True)
@@ -172,29 +121,24 @@ def fetch_items(
     gate: ExclusionGate,
     state_root: Path | None = None,
     pipeline: str | None = None,
-    ephemeral_boundary: EphemeralSweep | None = None,
     sleep: Sleep = time.sleep,
     now: Clock | None = None,
 ) -> FetchResult:
     """Enumerate, gate, fetch, spool, and checkpoint one source.
 
-    A blocked item never reaches ``provider.fetch_content``. Ephemeral items
-    are structurally available only to the designated 15-minute sweep *inside*
-    an active :class:`EphemeralSweep` boundary. That boundary clears stale
-    content at entry and only removes newly fetched content after the sweep
-    orchestrator has consumed it. Each cursor is written only after its item
-    has been successfully skipped or spooled; failures therefore leave the
-    prior checkpoint intact for a safe retry.
+    A blocked item never reaches ``provider.fetch_content``. EPHEMERAL is also
+    rejected before content fetch in Phase 1: no real 15-minute sweep
+    orchestrator exists yet, so exposing a caller-controlled lifecycle hook
+    would be self-authorizing rather than structural. Phase 2's designated
+    orchestrator must add the only persistence/consumption capability. Each
+    cursor is written only after its item has been successfully skipped or
+    spooled; failures therefore leave the prior checkpoint intact for a safe
+    retry.
     """
     root = state_root if state_root is not None else profile_state_root()
     run_name = pipeline or f"fetch-{provider.source_id}"
     _validate_filename_component(provider.source_id, label="source id")
     _validate_filename_component(run_name, label="pipeline")
-    is_ephemeral_sweep = (
-        run_name == _EPHEMERAL_SWEEP_PIPELINE
-        and ephemeral_boundary is not None
-        and ephemeral_boundary.permits(root)
-    )
     started = _timestamp(now)
     cursor = _read_cursor(root, provider.source_id)
     fetched = 0
@@ -208,17 +152,14 @@ def fetch_items(
                 blocked_skipped += 1
                 _write_cursor(root, provider.source_id, item.cursor, started)
                 continue
-            if decision is Decision.EPHEMERAL and not is_ephemeral_sweep:
-                raise FetchError("ephemeral items require the 15-minute sweep")
+            if decision is Decision.EPHEMERAL:
+                raise FetchError("ephemeral items are unsupported until Phase 2")
             content = _fetch_with_retry(provider, item, sleep=sleep)
-            tier = "ephemeral" if decision is Decision.EPHEMERAL else "full"
             _append_spool(
-                root, provider.source_id, item.envelope, content, tier, started
+                root, provider.source_id, item.envelope, content, "full", started
             )
             _write_cursor(root, provider.source_id, item.cursor, started)
             fetched += 1
-            if decision is Decision.EPHEMERAL:
-                ephemeral += 1
     except Exception as exc:
         _write_run_record(
             root,
@@ -308,17 +249,6 @@ def _append_spool(
     day = sweep[:10]
     with (destination / f"{day}.jsonl").open("a", encoding="utf-8") as spool:
         spool.write(encoded)
-
-
-def _clear_ephemeral_spool(root: Path) -> None:
-    """Remove all transient sweep content, refusing a redirected spool path."""
-    ephemeral_root = root / "spool" / "ephemeral"
-    if ephemeral_root.is_symlink():
-        raise FetchError("refusing to clear a symlinked ephemeral spool")
-    if ephemeral_root.exists():
-        shutil.rmtree(ephemeral_root)
-    ephemeral_root.mkdir(parents=True, mode=0o700)
-    ephemeral_root.chmod(0o700)
 
 
 def _validate_item(item: EnumeratedItem, source_id: str) -> None:

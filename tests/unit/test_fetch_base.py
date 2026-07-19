@@ -14,7 +14,6 @@ from mclaw_core.fetch import (
     EnumeratedItem,
     FetchError,
     JsonValue,
-    ephemeral_sweep,
     fetch_items,
     get_secret,
 )
@@ -152,10 +151,10 @@ def test_retries_three_times_and_honors_retry_after(tmp_path: Path) -> None:
     assert delays == [7.0, 7.0]
 
 
-def test_ephemeral_item_is_rejected_outside_the_15_minute_sweep(tmp_path: Path) -> None:
+def test_ephemeral_item_is_rejected_before_content_fetch(tmp_path: Path) -> None:
     provider = Provider([_item("chat:blocked", "blocked", "new")])
 
-    with pytest.raises(FetchError, match="15-minute sweep"):
+    with pytest.raises(FetchError, match="unsupported until Phase 2"):
         fetch_items(
             provider,
             gate=_gate(tmp_path, tier="ephemeral"),
@@ -167,37 +166,10 @@ def test_ephemeral_item_is_rejected_outside_the_15_minute_sweep(tmp_path: Path) 
     assert not (tmp_path / "state" / "spool" / "ephemeral").exists()
 
 
-def test_ephemeral_spool_is_emptied_at_sweep_boundaries(tmp_path: Path) -> None:
-    state = tmp_path / "state"
-    stale = state / "spool" / "ephemeral" / "old.jsonl"
-    stale.parent.mkdir(parents=True)
-    stale.write_text("stale ephemeral content", encoding="utf-8")
+def test_ephemeral_item_rejects_caller_selected_sweep_name(tmp_path: Path) -> None:
     provider = Provider([_item("chat:blocked", "blocked", "new")])
 
-    with ephemeral_sweep(state) as boundary:
-        result = fetch_items(
-            provider,
-            gate=_gate(tmp_path, tier="ephemeral"),
-            state_root=state,
-            pipeline="sweep-15m",
-            ephemeral_boundary=boundary,
-        )
-
-        spool_files = list(boundary.spool_root.rglob("*.jsonl"))
-        assert len(spool_files) == 1
-        assert "safe content" in spool_files[0].read_text(encoding="utf-8")
-
-    assert provider.content_calls == ["chat:blocked"]
-    assert result.ephemeral == 1
-    assert list((state / "spool" / "ephemeral").rglob("*")) == []
-
-
-def test_ephemeral_item_requires_active_boundary_even_for_sweep_name(
-    tmp_path: Path,
-) -> None:
-    provider = Provider([_item("chat:blocked", "blocked", "new")])
-
-    with pytest.raises(FetchError, match="15-minute sweep"):
+    with pytest.raises(FetchError, match="unsupported until Phase 2"):
         fetch_items(
             provider,
             gate=_gate(tmp_path, tier="ephemeral"),
