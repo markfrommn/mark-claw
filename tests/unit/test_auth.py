@@ -243,3 +243,26 @@ def test_telegram_auth_reuses_configured_session_for_self_test(
     assert (
         tmp_path / "state/mark-claw/test/secrets/telegram/session.string"
     ).read_text() == "session"
+
+
+def test_graph_device_flow_retries_authorization_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    replies = iter(
+        [
+            {
+                "device_code": "private",
+                "verification_uri_complete": "https://example.invalid/complete",
+                "interval": 1,
+            },
+            {"error": "authorization_pending"},
+            {"access_token": "private-token"},
+        ]
+    )
+    monkeypatch.setattr(auth, "_post_form", lambda url, fields: next(replies))
+    monkeypatch.setattr("mclaw_core.auth.webbrowser.open", lambda url: True)
+    monkeypatch.setattr("mclaw_core.auth.time.sleep", lambda delay: None)
+
+    assert auth._graph_device_flow("client", "tenant") == {
+        "access_token": "private-token"
+    }

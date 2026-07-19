@@ -12,6 +12,7 @@ import json
 import os
 import secrets
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -269,6 +270,10 @@ def _post_form(url: str, fields: Mapping[str, str]) -> dict[str, object]:
     try:
         with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
             raw = response.read()
+    except urllib.error.HTTPError as exc:
+        # RFC 8628 represents authorization_pending as HTTP 400. The parsed
+        # protocol code is consumed below and never appears in CLI output.
+        raw = exc.read()
     except (urllib.error.URLError, OSError) as exc:
         raise AuthError("provider authentication request failed") from exc
     try:
@@ -347,8 +352,6 @@ def _graph_device_flow(client_id: str, tenant_id: str) -> dict[str, object]:
     if not webbrowser.open(complete):
         raise AuthError("could not open browser for Graph authentication")
     # The device code remains local; polling has no user-visible credential output.
-    import time
-
     interval = device.get("interval", 5)
     wait = interval if isinstance(interval, int) and interval > 0 else 5
     for _ in range(120):
@@ -362,6 +365,8 @@ def _graph_device_flow(client_id: str, tenant_id: str) -> dict[str, object]:
         )
         if "access_token" in response:
             return response
+        if response.get("error") not in {"authorization_pending", "slow_down"}:
+            raise AuthError("Graph authentication did not complete")
         time.sleep(wait)
     raise AuthError("Graph authentication timed out")
 
