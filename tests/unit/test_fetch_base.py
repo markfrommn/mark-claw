@@ -14,6 +14,7 @@ from mclaw_core.fetch import (
     EnumeratedItem,
     FetchError,
     JsonValue,
+    TransientProviderError,
     _atomic_json_write,
     fetch_items,
     get_secret,
@@ -56,7 +57,7 @@ class FlakyProvider(Provider):
     def fetch_content(self, item: EnumeratedItem) -> dict[str, JsonValue]:
         self.attempts += 1
         if self.attempts < 3:
-            error = RuntimeError("slow down")
+            error = TransientProviderError("slow down")
             error.retry_after = 7  # type: ignore[attr-defined]
             raise error
         return super().fetch_content(item)
@@ -85,6 +86,21 @@ def test_gate_runs_before_content_fetch_for_blocked_item(tmp_path: Path) -> None
     assert provider.content_calls == []
     assert result.blocked_skipped == 1
     assert result.fetched == 0
+
+
+def test_blocked_item_does_not_checkpoint_its_opaque_cursor(tmp_path: Path) -> None:
+    state = tmp_path / "state"
+    cursor_path = state / "cursors" / "source.json"
+    cursor_path.parent.mkdir(parents=True)
+    cursor_path.write_text('{"source":"source","data":"old"}', encoding="utf-8")
+
+    fetch_items(
+        Provider([_item("chat:blocked", "blocked", "excluded-opaque-cursor")]),
+        gate=_gate(tmp_path, tier="blocked"),
+        state_root=state,
+    )
+
+    assert json.loads(cursor_path.read_text(encoding="utf-8"))["data"] == "old"
 
 
 def test_cursor_advances_only_after_successful_processing(tmp_path: Path) -> None:
@@ -202,6 +218,20 @@ def test_retries_three_times_and_honors_retry_after(tmp_path: Path) -> None:
     assert delays == [7.0, 7.0]
 
 
+def test_non_transient_provider_error_is_not_retried(tmp_path: Path) -> None:
+    provider = Provider([_item("chat:one", "allowed", "new")], fail=True)
+
+    with pytest.raises(FetchError):
+        fetch_items(
+            provider,
+            gate=_gate(tmp_path),
+            state_root=tmp_path / "state",
+            sleep=lambda _: pytest.fail("non-transient error must not sleep/retry"),
+        )
+
+    assert provider.content_calls == ["chat:one"]
+
+
 def test_ephemeral_item_is_rejected_before_content_fetch(tmp_path: Path) -> None:
     provider = Provider([_item("chat:blocked", "blocked", "new")])
 
@@ -253,3 +283,17 @@ def test_secret_child_process_receives_requested_profile(
     assert get_secret("keychain://mark-claw-alt/item-field", profile="alt") == "secret"
     assert child_envs[0]["MCLAW_PROFILE"] == "alt"
     assert set(child_envs[0]) == {"MCLAW_PROFILE", "PATH"}
+
+
+def test_secret_resolution_timeout_becomes_fetch_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(
+        command: list[str], *, timeout: float, **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(command, timeout)
+
+    monkeypatch.setattr("mclaw_core.fetch.subprocess.run", fake_run)
+
+    with pytest.raises(FetchError, match="resolution timed out"):
+        get_secret("keychain://mark-claw-alt/item-field", profile="alt")

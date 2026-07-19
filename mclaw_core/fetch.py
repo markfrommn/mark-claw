@@ -39,13 +39,19 @@ type JsonValue = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 type ItemRef = ChatRef | DriveRef | LocalRef | MeetingRef
 type Sleep = Callable[[float], None]
 type Clock = Callable[[], str]
+type Retryable = Callable[[Exception], bool]
 
 _REQUIRED_ENVELOPE_FIELDS = frozenset({"id", "source", "kind", "ts"})
 _MAX_ATTEMPTS = 3
+_SECRET_GET_TIMEOUT_S = 10
 
 
 class FetchError(Exception):
     """A provider item could not be safely fetched or persisted."""
+
+
+class TransientProviderError(Exception):
+    """A provider wrapper may raise this to opt an operation into retries."""
 
 
 @dataclass(frozen=True)
@@ -104,13 +110,20 @@ def get_secret(ref: str, *, profile: str) -> str:
     item, separator, field = account.rpartition("-")
     if not separator or not item or not field:
         raise FetchError("credential reference must contain an item and field")
-    completed = subprocess.run(
-        ["mclaw", "secret", "get", item, field],
-        check=False,
-        capture_output=True,
-        text=True,
-        env={"MCLAW_PROFILE": profile, "PATH": os.environ.get("PATH", os.defpath)},
-    )
+    try:
+        completed = subprocess.run(
+            ["mclaw", "secret", "get", item, field],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_SECRET_GET_TIMEOUT_S,
+            env={
+                "MCLAW_PROFILE": profile,
+                "PATH": os.environ.get("PATH", os.defpath),
+            },
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise FetchError("provider credential resolution timed out") from exc
     if completed.returncode != 0:
         raise FetchError("provider credential resolution failed")
     return completed.stdout.rstrip("\n")
@@ -124,6 +137,7 @@ def fetch_items(
     pipeline: str | None = None,
     sleep: Sleep = time.sleep,
     now: Clock | None = None,
+    retryable: Retryable | None = None,
 ) -> FetchResult:
     """Enumerate, gate, fetch, spool, and checkpoint one source.
 
@@ -141,6 +155,7 @@ def fetch_items(
     _validate_filename_component(provider.source_id, label="source id")
     _validate_filename_component(run_name, label="pipeline")
     started = _timestamp(now)
+    retry_predicate = retryable or _is_transient_provider_error
     fetched = 0
     blocked_skipped = 0
     ephemeral = 0
@@ -151,11 +166,12 @@ def fetch_items(
             decision = gate.check(provider.source_id, item.ref)
             if decision is Decision.BLOCKED:
                 blocked_skipped += 1
-                _write_cursor(root, provider.source_id, item.cursor, started)
                 continue
             if decision is Decision.EPHEMERAL:
                 raise FetchError("ephemeral items are unsupported until Phase 2")
-            content = _fetch_with_retry(provider, item, sleep=sleep)
+            content = _fetch_with_retry(
+                provider, item, sleep=sleep, retryable=retry_predicate
+            )
             _append_spool(
                 root, provider.source_id, item.envelope, content, "full", started
             )
@@ -271,12 +287,13 @@ def _fetch_with_retry(
     item: EnumeratedItem,
     *,
     sleep: Sleep,
+    retryable: Retryable,
 ) -> Mapping[str, JsonValue]:
     for attempt in range(_MAX_ATTEMPTS):
         try:
             return provider.fetch_content(item)
         except Exception as exc:
-            if attempt == _MAX_ATTEMPTS - 1:
+            if attempt == _MAX_ATTEMPTS - 1 or not retryable(exc):
                 raise
             sleep(_retry_delay(exc, attempt))
     raise AssertionError("unreachable")
@@ -298,6 +315,24 @@ def _retry_delay(exc: Exception, attempt: int) -> float:
         except (TypeError, ValueError):
             pass
     return float(2**attempt)
+
+
+def _is_transient_provider_error(exc: Exception) -> bool:
+    """Retry only known transport/rate-limit failures by default.
+
+    Provider wrappers can pass a narrower or provider-specific ``retryable``
+    predicate to :func:`fetch_items`; authentication, validation, and config
+    errors therefore do not become three identical provider calls.
+    """
+    if isinstance(exc, (TransientProviderError, TimeoutError, ConnectionError)):
+        return True
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None)
+    if isinstance(status_code, int) and (status_code == 429 or status_code >= 500):
+        return True
+    return "FloodWait" in type(exc).__name__ and isinstance(
+        getattr(exc, "seconds", None), (int, float)
+    )
 
 
 def _write_run_record(
