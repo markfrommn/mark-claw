@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import os
 import secrets
-import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -171,12 +170,9 @@ def authenticate_telegram(
     except ValueError as exc:
         raise AuthError("configured Telegram api_id is invalid") from exc
     session_path = secret_state_path(source["session"], profile=active)
-    existing = ""
-    if session_path.is_file() and not session_path.is_symlink():
-        try:
-            existing = session_path.read_text()
-        except OSError as exc:
-            raise AuthError("could not read Telegram session state") from exc
+    existing = _read_secret_file_if_present(
+        str(session_path.relative_to(paths.state_root(active) / "secrets")), active
+    )
     session, dialog_count = _telegram_login(numeric_api_id, api_hash, existing)
     relative = str(session_path.relative_to(paths.state_root(active) / "secrets"))
     write_secret_file(relative, session.encode(), profile=active)
@@ -208,8 +204,8 @@ def _load_telegram_source(profile: str) -> dict[str, str]:
 def _telegram_login(api_id: int, api_hash: str, session: str) -> tuple[str, int]:
     """Use Telethon's interactive client without exposing session material."""
     try:
-        from telethon import TelegramClient
         from telethon.sessions import StringSession
+        from telethon.sync import TelegramClient
     except ImportError as exc:  # pragma: no cover - dependency installation guard
         raise AuthError(
             "Telethon is unavailable; install project dependencies"
@@ -237,7 +233,7 @@ def _telegram_login(api_id: int, api_hash: str, session: str) -> tuple[str, int]
 def _parse_google_client(value: str) -> dict[str, str]:
     try:
         raw = json.loads(value)
-        client = raw.get("installed", raw.get("web"))
+        client = raw.get("installed")
         if not isinstance(client, dict):
             raise ValueError
         client_id, client_secret = client.get("client_id"), client.get("client_secret")
@@ -260,7 +256,7 @@ def _validate_google_token_scopes(token: Mapping[str, object]) -> None:
     granted = token.get("scope")
     if not isinstance(granted, str):
         raise AuthError("Google token response did not confirm readonly scopes")
-    if not set(granted.split()).issubset(set(GOOGLE_READONLY_SCOPES)):
+    if set(granted.split()) != set(GOOGLE_READONLY_SCOPES):
         raise AuthError("Google token response granted a non-readonly scope")
 
 
@@ -354,7 +350,11 @@ def _graph_device_flow(client_id: str, tenant_id: str) -> dict[str, object]:
     # The device code remains local; polling has no user-visible credential output.
     interval = device.get("interval", 5)
     wait = interval if isinstance(interval, int) and interval > 0 else 5
-    for _ in range(120):
+    expires_in = device.get("expires_in")
+    if not isinstance(expires_in, int) or expires_in <= 0:
+        raise AuthError("provider returned an invalid device authorization response")
+    deadline = time.monotonic() + expires_in
+    while time.monotonic() < deadline:
         response = _post_form(
             f"{base}/token",
             {
@@ -365,7 +365,10 @@ def _graph_device_flow(client_id: str, tenant_id: str) -> dict[str, object]:
         )
         if "access_token" in response:
             return response
-        if response.get("error") not in {"authorization_pending", "slow_down"}:
+        error = response.get("error")
+        if error == "slow_down":
+            wait += 5
+        elif error != "authorization_pending":
             raise AuthError("Graph authentication did not complete")
         time.sleep(wait)
     raise AuthError("Graph authentication timed out")
@@ -446,6 +449,53 @@ def _secure_dir(path: Path) -> None:
     path.chmod(0o700)
 
 
+def _open_secret_parent(relative: PurePosixPath, profile: str) -> tuple[int, str]:
+    """Open a secret parent through no-follow directory descriptors.
+
+    Creating a directory and then resolving it by pathname leaves a swap window.
+    Keeping a descriptor for each component means subsequent read/write calls
+    remain anchored to the checked directory even if a hostile local process
+    changes a pathname concurrently.
+    """
+    base = paths.state_root(profile) / "secrets"
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        descriptor = os.open(base, flags)
+        for part in relative.parts[:-1]:
+            child = os.open(part, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+    except OSError as exc:
+        raise AuthError("unsafe secret state directory") from exc
+    return descriptor, relative.name
+
+
+def _read_secret_file_if_present(relative: str, profile: str) -> str:
+    """Read an existing private state artifact without following any symlink."""
+    rel = PurePosixPath(relative)
+    config_state.init_state_tree(profile=profile)
+    try:
+        parent, name = _open_secret_parent(rel, profile)
+    except AuthError as exc:
+        if isinstance(exc.__cause__, FileNotFoundError):
+            return ""
+        raise
+    try:
+        try:
+            descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent)
+        except FileNotFoundError:
+            return ""
+        try:
+            with os.fdopen(descriptor, "r") as handle:
+                return handle.read()
+        except OSError as exc:
+            raise AuthError("could not read Telegram session state") from exc
+    except OSError as exc:
+        raise AuthError("could not read Telegram session state") from exc
+    finally:
+        os.close(parent)
+
+
 def write_secret_file(
     relative: str, content: bytes, *, profile: str | None = None
 ) -> Path:
@@ -473,20 +523,31 @@ def write_secret_file(
     for part in rel.parts[:-1]:
         parent = parent / part
         _secure_dir(parent)
-    target = parent / rel.name
-    if target.is_symlink():
-        raise AuthError("unsafe secret state file")
-    fd, temporary_name = tempfile.mkstemp(prefix=".auth-", dir=parent)
-    temporary = Path(temporary_name)
+    directory_fd, target_name = _open_secret_parent(rel, active_profile)
+    temporary_name = f".auth-{secrets.token_hex(16)}"
     try:
-        os.fchmod(fd, 0o600)
+        fd = os.open(
+            temporary_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=directory_fd,
+        )
         with os.fdopen(fd, "wb") as handle:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, target)
-        target.chmod(0o600)
+        os.replace(
+            temporary_name,
+            target_name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
     except OSError as exc:
-        temporary.unlink(missing_ok=True)
+        try:
+            os.unlink(temporary_name, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
         raise AuthError("could not securely write authentication state") from exc
-    return target
+    finally:
+        os.close(directory_fd)
+    return parent / target_name

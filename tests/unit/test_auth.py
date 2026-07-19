@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import stat
@@ -172,6 +173,24 @@ def test_google_auth_rejects_a_non_readonly_grant(
         auth.authenticate_google("google-work")
 
 
+@pytest.mark.parametrize(
+    "scope",
+    [
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/gmail.readonly extra",
+    ],
+)
+def test_google_scope_validation_requires_the_exact_phase_one_pair(scope: str) -> None:
+    with pytest.raises(auth.AuthError, match="non-readonly"):
+        auth._validate_google_token_scopes({"scope": scope})
+
+
+def test_google_client_rejects_web_client() -> None:
+    with pytest.raises(auth.AuthError, match="invalid"):
+        auth._parse_google_client('{"web": {"client_id": "id", "client_secret": "x"}}')
+
+
 def test_graph_auth_uses_configured_device_flow_and_private_cache(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -245,6 +264,30 @@ def test_telegram_auth_reuses_configured_session_for_self_test(
     ).read_text() == "session"
 
 
+def test_telegram_session_read_rejects_a_symlinked_parent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _xdg(monkeypatch, tmp_path)
+    target = root / "secrets/telegram/session.string"
+    target.parent.mkdir(parents=True)
+    target.parent.unlink() if target.parent.is_symlink() else None
+    # Replace the provider directory after the safe top-level initialization.
+    target.parent.rmdir()
+    target.parent.symlink_to(tmp_path)
+    with pytest.raises(auth.AuthError, match="unsafe secret state directory"):
+        auth._read_secret_file_if_present("telegram/session.string", "test")
+
+
+def test_telethon_sync_wrapper_has_a_synchronous_get_dialogs_method() -> None:
+    from telethon import TelegramClient
+
+    raw_get_dialogs = TelegramClient.get_dialogs
+    from telethon.sync import TelegramClient as SyncTelegramClient
+
+    assert inspect.iscoroutinefunction(raw_get_dialogs)
+    assert not inspect.iscoroutinefunction(SyncTelegramClient.get_dialogs)
+
+
 def test_graph_device_flow_retries_authorization_pending(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -254,6 +297,7 @@ def test_graph_device_flow_retries_authorization_pending(
                 "device_code": "private",
                 "verification_uri_complete": "https://example.invalid/complete",
                 "interval": 1,
+                "expires_in": 60,
             },
             {"error": "authorization_pending"},
             {"access_token": "private-token"},
@@ -266,3 +310,54 @@ def test_graph_device_flow_retries_authorization_pending(
     assert auth._graph_device_flow("client", "tenant") == {
         "access_token": "private-token"
     }
+
+
+def test_graph_device_flow_slows_down_and_honors_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    replies = iter(
+        [
+            {
+                "device_code": "private",
+                "verification_uri_complete": "https://example.invalid/complete",
+                "interval": 2,
+                "expires_in": 10,
+            },
+            {"error": "slow_down"},
+            {"access_token": "private-token"},
+        ]
+    )
+    sleeps: list[int] = []
+    monkeypatch.setattr(auth, "_post_form", lambda url, fields: next(replies))
+    monkeypatch.setattr("mclaw_core.auth.webbrowser.open", lambda url: True)
+    monkeypatch.setattr("mclaw_core.auth.time.sleep", sleeps.append)
+    monkeypatch.setattr("mclaw_core.auth.time.monotonic", lambda: 1.0)
+
+    assert auth._graph_device_flow("client", "tenant") == {
+        "access_token": "private-token"
+    }
+    assert sleeps == [7]
+
+
+def test_graph_device_flow_stops_at_provider_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    replies = iter(
+        [
+            {
+                "device_code": "private",
+                "verification_uri_complete": "https://example.invalid/complete",
+                "interval": 1,
+                "expires_in": 1,
+            },
+            {"error": "authorization_pending"},
+        ]
+    )
+    ticks = iter([0.0, 0.0, 1.0])
+    monkeypatch.setattr(auth, "_post_form", lambda url, fields: next(replies))
+    monkeypatch.setattr("mclaw_core.auth.webbrowser.open", lambda url: True)
+    monkeypatch.setattr("mclaw_core.auth.time.sleep", lambda delay: None)
+    monkeypatch.setattr("mclaw_core.auth.time.monotonic", lambda: next(ticks))
+
+    with pytest.raises(auth.AuthError, match="timed out"):
+        auth._graph_device_flow("client", "tenant")
