@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -140,11 +141,11 @@ def fetch_items(
     _validate_filename_component(provider.source_id, label="source id")
     _validate_filename_component(run_name, label="pipeline")
     started = _timestamp(now)
-    cursor = _read_cursor(root, provider.source_id)
     fetched = 0
     blocked_skipped = 0
     ephemeral = 0
     try:
+        cursor = _read_cursor(root, provider.source_id)
         for item in provider.enumerate_items(cursor):
             _validate_item(item, provider.source_id)
             decision = gate.check(provider.source_id, item.ref)
@@ -319,6 +320,10 @@ def _write_run_record(
     }
     if result == "ok":
         record["last_success"] = started
+    else:
+        last_success = _read_last_success(root, pipeline)
+        if last_success is not None:
+            record["last_success"] = last_success
     if error is not None:
         record["error"] = error
     _atomic_json_write(root / "runs" / f"{pipeline}.json", record)
@@ -330,9 +335,43 @@ def _write_run_record(
 
 def _atomic_json_write(path: Path, value: Mapping[str, JsonValue]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, separators=(",", ":")), encoding="utf-8")
-    temporary.replace(path)
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        try:
+            encoded = json.dumps(value, separators=(",", ":")).encode("utf-8")
+            offset = 0
+            while offset < len(encoded):
+                offset += os.write(fd, encoded[offset:])
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(temporary, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _read_last_success(root: Path, pipeline: str) -> str | None:
+    """Return a valid previous success timestamp, treating bad state as absent."""
+    path = root / "runs" / f"{pipeline}.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or data.get("pipeline") != pipeline:
+        return None
+    last_success = data.get("last_success")
+    return last_success if isinstance(last_success, str) and last_success else None
 
 
 def _is_json_value(value: object) -> bool:

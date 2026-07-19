@@ -14,6 +14,7 @@ from mclaw_core.fetch import (
     EnumeratedItem,
     FetchError,
     JsonValue,
+    _atomic_json_write,
     fetch_items,
     get_secret,
 )
@@ -99,6 +100,56 @@ def test_cursor_advances_only_after_successful_processing(tmp_path: Path) -> Non
         )
 
     assert json.loads(cursor_path.read_text(encoding="utf-8"))["data"] == "old"
+
+
+def test_malformed_cursor_writes_error_run_record(tmp_path: Path) -> None:
+    state = tmp_path / "state"
+    cursor_path = state / "cursors" / "source.json"
+    cursor_path.parent.mkdir(parents=True)
+    cursor_path.write_text("not json", encoding="utf-8")
+
+    with pytest.raises(FetchError, match="cursor state is unreadable"):
+        fetch_items(Provider([]), gate=_gate(tmp_path), state_root=state)
+
+    run = json.loads((state / "runs" / "fetch-source.json").read_text(encoding="utf-8"))
+    history = (state / "runs" / "history.jsonl").read_text(encoding="utf-8")
+    assert run["last_result"] == "error"
+    assert run["error"] == "FetchError"
+    assert '"last_result":"error"' in history
+
+
+def test_error_run_preserves_prior_last_success(tmp_path: Path) -> None:
+    state = tmp_path / "state"
+    runs = state / "runs"
+    runs.mkdir(parents=True)
+    (runs / "backfill.json").write_text(
+        '{"pipeline":"backfill","last_success":"2026-07-17T01:00:00Z"}',
+        encoding="utf-8",
+    )
+    provider = Provider([_item("chat:one", "allowed", "new")], fail=True)
+
+    with pytest.raises(FetchError):
+        fetch_items(
+            provider,
+            gate=_gate(tmp_path),
+            state_root=state,
+            pipeline="backfill",
+            sleep=lambda _: None,
+        )
+
+    run = json.loads((runs / "backfill.json").read_text(encoding="utf-8"))
+    assert run["last_success"] == "2026-07-17T01:00:00Z"
+
+
+def test_atomic_json_write_uses_unique_temporary_file(tmp_path: Path) -> None:
+    target = tmp_path / "state.json"
+    stale_fixed_temp = tmp_path / "state.json.tmp"
+    stale_fixed_temp.write_text("another writer", encoding="utf-8")
+
+    _atomic_json_write(target, {"ok": True})
+
+    assert json.loads(target.read_text(encoding="utf-8")) == {"ok": True}
+    assert stale_fixed_temp.read_text(encoding="utf-8") == "another writer"
 
 
 def test_spool_record_uses_common_envelope_schema(tmp_path: Path) -> None:
