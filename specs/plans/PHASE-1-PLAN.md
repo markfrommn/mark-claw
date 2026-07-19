@@ -385,7 +385,7 @@ uv run pytest tests/unit/test_fetch_base.py
 # covers: gate consulted before content fetch (mock provider asserts no content call for BLOCKED);
 # cursor advances only on success; spool envelope schema; blocked_skipped counted without identifiers
 ```
-- [ ] Done · Linear: [DEV-19](https://linear.app/psols/issue/DEV-19)
+- [x] Done · Linear: [DEV-19](https://linear.app/psols/issue/DEV-19) · commit `6884914` (2026-07-18)
 
 ### D2 — Mail wrappers: Gmail ×3 + Graph (read-only)
 **Lands:** repo (`bin/mclaw-fetch-gmail`, `bin/mclaw-fetch-graph` + shared google/msal client builders) · state (token caches already from A2/A3; spool + cursors at runtime).
