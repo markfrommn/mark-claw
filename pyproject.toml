@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 # YAML). The dependency-allowlist + framework deny-list test
 # (tests/unit/test_deny_list.py) guards this minimal surface against
 # agent-runtime packages per MARK-CLAW-TOOLS.md §12.
-dependencies = ["pyyaml>=6.0"]
+dependencies = ["pyyaml>=6.0", "telethon>=1.44"]
 
 [project.scripts]
 mclaw = "mclaw_core.cli:main"
@@ -48,6 +48,12 @@ disallow_incomplete_defs = false
 module = "yaml"
 # PyYAML's bundled type info varies by install; treat as best-effort. The
 # doctor's own parsing narrows the result (isinstance(data, dict)) before use.
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "telethon.*"
+# Telethon 1.44 does not ship PEP 561 type metadata; its narrow boundary is
+# covered by mocked unit tests and all session values stay inside auth.py.
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

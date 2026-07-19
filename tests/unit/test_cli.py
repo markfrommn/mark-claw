@@ -306,9 +306,7 @@ def test_doctor_init_exits_0_on_fresh_profile_with_vault_unset(
     assert "FAIL" in out  # ...it just doesn't fail the bootstrap exit code.
 
 
-def test_doctor_init_malformed_config_is_nonzero(
-    monkeypatch, capsys, tmp_path
-) -> None:
+def test_doctor_init_malformed_config_is_nonzero(monkeypatch, capsys, tmp_path) -> None:
     """``--init`` must not mask a malformed config.
 
     ``settings.yaml`` that fails to parse is a non-deferred hard FAIL, so
@@ -399,9 +397,7 @@ def test_doctor_vault_existing_dir_ok(monkeypatch, capsys, tmp_path) -> None:
     cli.main(["doctor", "--init"])
     vault_dir = tmp_path / "real-vault"
     vault_dir.mkdir()
-    _write_valid_settings(
-        cfg / "mark-claw" / "mark" / "settings.yaml", str(vault_dir)
-    )
+    _write_valid_settings(cfg / "mark-claw" / "mark" / "settings.yaml", str(vault_dir))
     rc = cli.main(["doctor"])
     out = capsys.readouterr().out
     assert rc == 0
@@ -461,9 +457,7 @@ def test_doctor_keychain_locked_is_warn(monkeypatch, capsys, tmp_path) -> None:
     # Set a valid vault so the only non-ok check is the keychain WARN.
     vault_dir = tmp_path / "vault"
     vault_dir.mkdir()
-    _write_valid_settings(
-        cfg / "mark-claw" / "mark" / "settings.yaml", str(vault_dir)
-    )
+    _write_valid_settings(cfg / "mark-claw" / "mark" / "settings.yaml", str(vault_dir))
     capsys.readouterr()
     # Real binary on PATH (deterministic), but keychain enumeration fails.
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/security")
@@ -527,9 +521,7 @@ def test_doctor_config_file_invalid_utf8_is_hard_fail(
     assert "unreadable" in out
 
 
-def test_doctor_secure_dir_symlink_is_hard_fail(
-    monkeypatch, capsys, tmp_path
-) -> None:
+def test_doctor_secure_dir_symlink_is_hard_fail(monkeypatch, capsys, tmp_path) -> None:
     """A symlink at a fail-closed secure dir (``secrets/``) must FAIL the
     ``perms secrets/`` check hard and exit nonzero — the doctor must not follow
     the link (no chmod on the target, no treating the target as a valid secure
@@ -562,12 +554,27 @@ def test_doctor_secure_dir_symlink_is_hard_fail(
 
 
 @pytest.mark.parametrize("provider", ["google", "graph", "telegram"])
-def test_auth_is_stub_nonzero(capsys, provider) -> None:
+def test_auth_without_configuration_fails_safely(capsys, provider) -> None:
     rc = cli.main(["auth", provider])
     err = capsys.readouterr().err
     assert rc == 1
-    assert "not implemented" in err
-    assert "DEV-31" in err
+    assert "mclaw auth" in err
+    assert "not implemented" not in err
+
+
+def test_auth_google_dispatches_self_test_without_exposing_token(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        "mclaw_core.cli.auth.authenticate_google",
+        lambda account, *, self_test: {"emailAddress": "safe@example.invalid"},
+    )
+
+    assert cli.main(["auth", "google", "work", "--self-test"]) == 0
+
+    captured = capsys.readouterr()
+    assert captured.out == "emailAddress: safe@example.invalid\n"
+    assert captured.err == ""
 
 
 @pytest.mark.parametrize("command", ["exclusions", "fetch", "ingest"])

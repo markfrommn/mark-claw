@@ -35,7 +35,7 @@ DENY_GLOBS = [
 #: surface stays audited-minimal; adding a dependency requires a deliberate edit
 #: here (preserving the property the former empty-deps assertion protected).
 #: ``pyyaml`` is admitted for YAML config parsing — Python has no stdlib YAML.
-ALLOWED_RUNTIME_DEPS: frozenset[str] = frozenset({"pyyaml"})
+ALLOWED_RUNTIME_DEPS: frozenset[str] = frozenset({"pyyaml", "telethon"})
 
 PYPROJECT = Path(__file__).resolve().parents[2] / "pyproject.toml"
 
