@@ -439,16 +439,6 @@ def secret_state_path(value: str, *, profile: str | None = None) -> Path:
     return paths.state_root(profile) / Path(*parts)
 
 
-def _secure_dir(path: Path) -> None:
-    """Create one secret directory or reject a symlink at that location."""
-    if path.is_symlink():
-        raise AuthError("unsafe secret state directory")
-    path.mkdir(mode=0o700, exist_ok=True)
-    if path.is_symlink() or not path.is_dir():
-        raise AuthError("unsafe secret state directory")
-    path.chmod(0o700)
-
-
 def _open_secret_parent(relative: PurePosixPath, profile: str) -> tuple[int, str]:
     """Open a secret parent through no-follow directory descriptors.
 
@@ -463,6 +453,28 @@ def _open_secret_parent(relative: PurePosixPath, profile: str) -> tuple[int, str
         descriptor = os.open(base, flags)
         for part in relative.parts[:-1]:
             child = os.open(part, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+    except OSError as exc:
+        raise AuthError("unsafe secret state directory") from exc
+    return descriptor, relative.name
+
+
+def _create_secret_parent(relative: PurePosixPath, profile: str) -> tuple[int, str]:
+    """Create private child directories through anchored no-follow descriptors."""
+    base = paths.state_root(profile) / "secrets"
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        descriptor = os.open(base, flags)
+        for part in relative.parts[:-1]:
+            try:
+                os.mkdir(part, 0o700, dir_fd=descriptor)
+            except FileExistsError:
+                pass
+            child = os.open(part, flags, dir_fd=descriptor)
+            # This applies to the opened inode, never a path an attacker can
+            # swap between a check and chmod.
+            os.fchmod(child, 0o700)
             os.close(descriptor)
             descriptor = child
     except OSError as exc:
@@ -518,12 +530,7 @@ def write_secret_file(
     # directory, then create provider/account subdirectories privately.
     active_profile = paths.resolve_profile() if profile is None else profile
     config_state.init_state_tree(profile=active_profile)
-    base = root / "secrets"
-    parent = base
-    for part in rel.parts[:-1]:
-        parent = parent / part
-        _secure_dir(parent)
-    directory_fd, target_name = _open_secret_parent(rel, active_profile)
+    directory_fd, target_name = _create_secret_parent(rel, active_profile)
     temporary_name = f".auth-{secrets.token_hex(16)}"
     try:
         fd = os.open(
@@ -532,6 +539,8 @@ def write_secret_file(
             0o600,
             dir_fd=directory_fd,
         )
+        # Explicitly assert the final mode: creation mode is filtered by umask.
+        os.fchmod(fd, 0o600)
         with os.fdopen(fd, "wb") as handle:
             handle.write(content)
             handle.flush()
@@ -550,4 +559,4 @@ def write_secret_file(
         raise AuthError("could not securely write authentication state") from exc
     finally:
         os.close(directory_fd)
-    return parent / target_name
+    return root / "secrets" / Path(*rel.parts)

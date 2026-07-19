@@ -63,6 +63,25 @@ def test_write_secret_file_does_not_preserve_wide_permissions(
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
 
 
+def test_write_secret_file_explicitly_enforces_file_mode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _xdg(monkeypatch, tmp_path)
+    actual_fchmod = os.fchmod
+    modes: list[int] = []
+
+    def record_fchmod(descriptor: int, mode: int) -> None:
+        modes.append(mode)
+        actual_fchmod(descriptor, mode)
+
+    monkeypatch.setattr("mclaw_core.auth.os.fchmod", record_fchmod)
+
+    auth.write_secret_file("provider/account/token.json", b"opaque")
+
+    assert 0o600 in modes
+    assert 0o700 in modes
+
+
 def test_token_cache_path_accepts_only_state_secrets_descendants(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
